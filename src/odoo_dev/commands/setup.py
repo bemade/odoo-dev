@@ -1,6 +1,7 @@
 """Setup commands for initializing Odoo development environment."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -75,11 +76,26 @@ def _update_env_file(env_file: Path, updates: dict[str, str]) -> None:
     env_file.write_text(content + "\n")
 
 
+def _clean():
+    cfg = load_config()
+    success("Cleaning up current environment...")
+    for name in ["odoo", "enterprise", "design-themes", "industry", ".venv"]:
+        path = cfg.project_dir / name
+        if path.exists():
+            shutil.rmtree(path)
+    success("Clean up complete.")
+
+
 def setup(
     community: bool = typer.Option(
         False,
         "--community",
         help="Set up Community edition only (skip Enterprise repos)",
+    ),
+    clean: bool = typer.Option(
+        False,
+        "--clean",
+        help="Clean up before setup (remove existing venv, etc.)",
     ),
 ) -> None:
     """Complete setup: clone Odoo repos, configure VSCode, build image."""
@@ -88,6 +104,8 @@ def setup(
 
     cfg = load_config()
 
+    if clean:
+        _clean()
     success("Setting up complete Odoo development environment...")
 
     # Initialize/update git submodules first
@@ -305,22 +323,25 @@ def _clone_odoo_repos(cfg, community_only: bool = False) -> None:
     if community_only:
         warning("Community edition mode: Enterprise repositories will be skipped")
 
+    # Use HTTPS for odoo (public), SSH for all others (private)
     repos = [
-        (f"git@github.com:odoo/odoo.git", "odoo", cfg.odoo_version),
-        (f"git@github.com:odoo/design-themes.git", "design-themes", cfg.odoo_version),
+        ("https://github.com/odoo/odoo.git", "odoo", cfg.odoo_version),
     ]
 
-    # Add enterprise if not community only
+    # Private repos require SSH
+    repos.append(
+        ("git@github.com:odoo/design-themes.git", "design-themes", cfg.odoo_version)
+    )
+
+    # Add enterprise if not community only (private repo, needs SSH)
     if not community_only:
         repos.append(
-            (f"git@github.com:odoo/enterprise.git", "enterprise", cfg.odoo_version)
+            ("git@github.com:odoo/enterprise.git", "enterprise", cfg.odoo_version)
         )
 
-    # Add industry for Odoo 18+
+    # Add industry for Odoo 18+ (private repo)
     if cfg.odoo_version.startswith("18") or cfg.odoo_version.startswith("19"):
-        repos.append(
-            (f"git@github.com:odoo/industry.git", "industry", cfg.odoo_version)
-        )
+        repos.append(("git@github.com:odoo/industry.git", "industry", cfg.odoo_version))
 
     for repo_url, repo_dir, branch in repos:
         repo_path = cfg.project_dir / repo_dir
@@ -355,6 +376,15 @@ def _clone_odoo_repos(cfg, community_only: bool = False) -> None:
     success("Odoo repositories setup complete.")
 
 
+def _can_sudo_without_password() -> bool:
+    """Check if sudo can run without prompting for password."""
+    result = subprocess.run(
+        ["sudo", "-n", "true"],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
 def _install_system_dependencies() -> None:
     """Install system dependencies based on OS."""
     import platform
@@ -376,6 +406,13 @@ def _install_system_dependencies() -> None:
             check=False,
         )
     elif system == "Linux":
+        if not _can_sudo_without_password():
+            warning(
+                "Cannot run sudo without password. "
+                "Please install system dependencies manually or run with sudo."
+            )
+            return
+
         success("Installing dependencies for Linux...")
         subprocess.run(
             [

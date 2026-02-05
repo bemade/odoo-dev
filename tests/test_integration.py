@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from odoo_dev.cli import app
 from odoo_dev.config import load_config
+from odoo_dev.commands import setup
 
 runner = CliRunner()
 
@@ -20,7 +21,9 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "odoo-empty"
 def fixture_dir() -> Path:
     """Return the path to the odoo-empty fixture."""
     if not FIXTURE_DIR.exists():
-        pytest.skip("odoo-empty fixture not available (run: git submodule update --init)")
+        pytest.skip(
+            "odoo-empty fixture not available (run: git submodule update --init)"
+        )
     return FIXTURE_DIR
 
 
@@ -109,11 +112,14 @@ def setup_fixture_env():
         result = runner.invoke(
             app,
             ["setup", "--community"],
-            input="n\n",  # Say no to Docker setup prompt
+            # Odoo 19.0, Python 3.12, no save to .env, no docker
+            input="19.0\n3.12\nn\nn\n",
         )
 
         if result.exit_code != 0:
-            pytest.skip(f"Setup failed: {result.output}")
+            pytest.fail(
+                f"Setup failed (exit code {result.exit_code}):\n{result.output}"
+            )
 
         yield FIXTURE_DIR
 
@@ -156,7 +162,10 @@ class TestRunCommandsWithoutPrerequisites:
     def test_run_fails_without_venv(self, in_clean_fixture: Path):
         result = runner.invoke(app, ["run"])
         assert result.exit_code != 0
-        assert "Virtual environment not found" in result.output or "not found" in result.output.lower()
+        assert (
+            "Virtual environment not found" in result.output
+            or "not found" in result.output.lower()
+        )
 
     def test_shell_fails_without_venv(self, in_clean_fixture: Path):
         result = runner.invoke(app, ["shell", "testdb"])
