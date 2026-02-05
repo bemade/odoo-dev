@@ -2,9 +2,24 @@
 
 from typer.testing import CliRunner
 
+from odoo_dev import __version__
 from odoo_dev.cli import app
 
 runner = CliRunner()
+
+
+class TestVersion:
+    """Test version flag."""
+
+    def test_version_long(self):
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert __version__ in result.output
+
+    def test_version_short(self):
+        result = runner.invoke(app, ["-v"])
+        assert result.exit_code == 0
+        assert "odoo-dev" in result.output
 
 
 class TestCliHelp:
