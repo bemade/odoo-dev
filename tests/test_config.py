@@ -114,7 +114,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
 
         assert cfg.project_dir == tmp_path
-        assert cfg.odoo_version == "18.0"  # default
+        assert cfg.odoo_version == "19.0"  # default
         assert cfg.python_version == "3.12"  # default
         assert cfg.project_name == tmp_path.name
 

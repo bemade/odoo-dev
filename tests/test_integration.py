@@ -146,7 +146,7 @@ class TestConfigWithFixture:
 
     def test_default_versions(self, in_fixture_dir: Path):
         cfg = load_config()
-        assert cfg.odoo_version == "18.0"
+        assert cfg.odoo_version == "19.0"
         assert cfg.python_version == "3.12"
 
 

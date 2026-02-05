@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+# Default versions
+DEFAULT_ODOO_VERSION = "19.0"
+DEFAULT_PYTHON_VERSION = "3.12"
+
 
 @dataclass
 class ProjectConfig:
@@ -95,7 +99,7 @@ def load_config(project_dir: Path | None = None) -> ProjectConfig:
     return ProjectConfig(
         project_dir=project_dir,
         script_dir=project_dir / ".odoo-deploy",
-        odoo_version=os.getenv("ODOO_VERSION", "18.0"),
-        python_version=os.getenv("PYTHON_VERSION", "3.12"),
+        odoo_version=os.getenv("ODOO_VERSION", DEFAULT_ODOO_VERSION),
+        python_version=os.getenv("PYTHON_VERSION", DEFAULT_PYTHON_VERSION),
         project_name=project_dir.name,
     )

@@ -1,21 +1,91 @@
 """Setup commands for initializing Odoo development environment."""
 
+import os
 import subprocess
 from pathlib import Path
-from typing import Annotated
 
 import typer
 
-from odoo_dev.config import load_config
-from odoo_dev.utils.console import error, success, warning
+from odoo_dev.config import (
+    DEFAULT_ODOO_VERSION,
+    DEFAULT_PYTHON_VERSION,
+    find_project_root,
+    load_config,
+    load_dotenv,
+)
+from odoo_dev.utils.console import info, success, warning
+
+
+def _prompt_for_versions() -> None:
+    """Prompt for ODOO_VERSION and PYTHON_VERSION if not set.
+
+    Checks environment and .env file. If not found, prompts interactively
+    and optionally saves to .env.
+    """
+    project_dir = find_project_root()
+    env_file = project_dir / ".env"
+
+    # Load existing .env
+    load_dotenv(env_file)
+
+    odoo_version = os.getenv("ODOO_VERSION")
+    python_version = os.getenv("PYTHON_VERSION")
+
+    updates = {}
+
+    if not odoo_version:
+        odoo_version = typer.prompt(
+            "Odoo version",
+            default=DEFAULT_ODOO_VERSION,
+        )
+        os.environ["ODOO_VERSION"] = odoo_version
+        updates["ODOO_VERSION"] = odoo_version
+
+    if not python_version:
+        python_version = typer.prompt(
+            "Python version",
+            default=DEFAULT_PYTHON_VERSION,
+        )
+        os.environ["PYTHON_VERSION"] = python_version
+        updates["PYTHON_VERSION"] = python_version
+
+    # Offer to save to .env if we prompted for anything
+    if updates:
+        if typer.confirm("Save these settings to .env?", default=True):
+            _update_env_file(env_file, updates)
+            success(f"Settings saved to {env_file}")
+
+
+def _update_env_file(env_file: Path, updates: dict[str, str]) -> None:
+    """Update or create .env file with new values."""
+    existing = {}
+
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                existing[key.strip()] = value.strip()
+
+    # Merge updates
+    existing.update(updates)
+
+    # Write back
+    content = "\n".join(f"{k}={v}" for k, v in sorted(existing.items()))
+    env_file.write_text(content + "\n")
 
 
 def setup(
     community: bool = typer.Option(
-        False, "--community", help="Set up Community edition only (skip Enterprise repos)"
+        False,
+        "--community",
+        help="Set up Community edition only (skip Enterprise repos)",
     ),
 ) -> None:
     """Complete setup: clone Odoo repos, configure VSCode, build image."""
+    # Prompt for versions if not configured
+    _prompt_for_versions()
+
     cfg = load_config()
 
     success("Setting up complete Odoo development environment...")
@@ -34,7 +104,9 @@ def setup(
 
     # Set up local virtual environment
     success("\nSetting up local Python virtual environment...")
-    warning(f"This will install system dependencies and Python {cfg.python_version} if needed")
+    warning(
+        f"This will install system dependencies and Python {cfg.python_version} if needed"
+    )
     setup_venv()
 
     # Prompt for Docker setup
@@ -42,6 +114,7 @@ def setup(
     if typer.confirm("Continue with Docker setup?", default=True):
         success("\nBuilding Docker image...")
         from odoo_dev.commands.docker import build
+
         build(community=community)
     else:
         warning("Skipping Docker setup. Run 'odoo-dev build' later.")
@@ -72,7 +145,9 @@ def setup_venv() -> None:
             stdout=subprocess.PIPE,
         )
         # Would pipe to sh, but let's be explicit
-        warning("Please install uv manually: curl -LsSf https://astral.sh/uv/install.sh | sh")
+        warning(
+            "Please install uv manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        )
 
     # Create virtual environment
     if not cfg.venv_path.exists():
@@ -88,7 +163,13 @@ def setup_venv() -> None:
     _update_python_path(cfg)
 
     # Install requirements
-    venv_pip = ["uv", "pip", "install", "--python", str(cfg.venv_path / "bin" / "python")]
+    venv_pip = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(cfg.venv_path / "bin" / "python"),
+    ]
 
     # Install Odoo requirements
     odoo_requirements = cfg.project_dir / "odoo" / "requirements.txt"
@@ -110,7 +191,9 @@ def setup_venv() -> None:
 
     # Install dev tools
     success("Installing development tools...")
-    subprocess.run([*venv_pip, "pytest", "pytest-odoo", "debugpy", "manifestoo", "coverage"])
+    subprocess.run(
+        [*venv_pip, "pytest", "pytest-odoo", "debugpy", "manifestoo", "coverage"]
+    )
 
     success("\nVirtual environment setup complete!")
     success(f"To activate: source {cfg.venv_path}/bin/activate")
@@ -193,10 +276,12 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
     if not community_only:
         addons_paths.append(str(cfg.project_dir / "enterprise"))
 
-    addons_paths.extend([
-        str(cfg.project_dir / "design-themes"),
-        str(cfg.project_dir / "addons"),
-    ])
+    addons_paths.extend(
+        [
+            str(cfg.project_dir / "design-themes"),
+            str(cfg.project_dir / "addons"),
+        ]
+    )
 
     # Filter to only existing paths
     addons_paths = [p for p in addons_paths if Path(p).exists()]
@@ -335,7 +420,7 @@ def _update_python_path(cfg) -> None:
     if "# Odoo PYTHONPATH setup" in content:
         return
 
-    pythonpath_setup = '''
+    pythonpath_setup = """
 # Odoo PYTHONPATH setup
 if [ -z "$_OLD_VIRTUAL_PYTHONPATH" ]; then
     _OLD_VIRTUAL_PYTHONPATH="$PYTHONPATH"
@@ -357,7 +442,7 @@ if [ -n "$ODOO_PYTHONPATH" ]; then
     export PYTHONPATH
 fi
 # End Odoo PYTHONPATH setup
-'''
+"""
 
     content += pythonpath_setup
     activate_script.write_text(content)
