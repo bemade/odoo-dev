@@ -71,6 +71,7 @@ def build(
     ),
 ) -> None:
     """Rebuild the Odoo Docker image."""
+    import importlib.resources
     import shutil
 
     cfg = load_config()
@@ -81,10 +82,19 @@ def build(
     build_context.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Copy necessary files to build context
-        shutil.copy(cfg.script_dir / "Dockerfile", build_context)
-        shutil.copy(cfg.script_dir / "docker-entrypoint.sh", build_context)
-        shutil.copy(cfg.docker_config_file, build_context / "odoo.conf")
+        # Write Docker templates directly to build context from package
+        templates = importlib.resources.files("odoo_dev.templates.docker")
+        for filename in ["Dockerfile", "docker-entrypoint.sh"]:
+            (build_context / filename).write_text(
+                templates.joinpath(filename).read_text()
+            )
+
+        # Generate Docker odoo.conf
+        from odoo_dev.commands.setup import _generate_docker_odoo_conf
+
+        (build_context / "odoo.conf").write_text(
+            _generate_docker_odoo_conf(community_only=community)
+        )
 
         # Copy requirements files
         if (cfg.project_dir / "requirements.txt").exists():

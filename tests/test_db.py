@@ -8,15 +8,13 @@ from odoo_dev.commands.db import _parse_db_config
 class TestParseDbConfig:
     def test_parses_full_config(self, tmp_path: Path):
         config_file = tmp_path / "odoo.conf"
-        config_file.write_text(
-            """[options]
+        config_file.write_text("""[options]
 db_host = localhost
 db_port = 5432
 db_user = myuser
 db_password = secret123
 admin_passwd = admin
-"""
-        )
+""")
 
         result = _parse_db_config(config_file)
 

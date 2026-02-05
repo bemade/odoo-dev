@@ -82,7 +82,15 @@ def cleanup_fixture_env():
     yield
 
     # Clean up directories that setup may have created
-    created_dirs = ["odoo", "design-themes", "industry", ".venv", "conf", ".vscode"]
+    created_dirs = [
+        "odoo",
+        "design-themes",
+        "industry",
+        ".venv",
+        "conf",
+        ".vscode",
+        ".odoo-deploy",
+    ]
     for dirname in created_dirs:
         dir_path = FIXTURE_DIR / dirname
         if dir_path.exists():
@@ -257,6 +265,16 @@ class TestSetupSuccess:
         vscode_path = in_setup_fixture / ".vscode"
         assert vscode_path.exists(), ".vscode directory should exist"
         assert (vscode_path / "launch.json").exists(), "launch.json should exist"
+
+
+@pytest.mark.slow
+class TestDockerBuild:
+    """Test that Docker build works correctly."""
+
+    def test_docker_build(self, in_setup_fixture: Path):
+        """Verify Docker build works."""
+        result = runner.invoke(app, ["docker", "build"])
+        assert result.exit_code == 0, f"Docker build failed: {result.output}"
 
 
 @pytest.mark.slow

@@ -1,0 +1,40 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Update Module",
+            "type": "shell",
+            "command": "odoo-dev docker restart",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Start Odoo Shell",
+            "type": "shell",
+            "command": "odoo-dev docker shell ${input:database}",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Restart Odoo",
+            "type": "shell",
+            "command": "odoo-dev docker restart",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "database",
+            "description": "Database name",
+            "default": "",
+            "type": "promptString"
+        }
+    ]
+}

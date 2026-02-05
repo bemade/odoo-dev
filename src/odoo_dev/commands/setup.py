@@ -1,5 +1,6 @@
 """Setup commands for initializing Odoo development environment."""
 
+import importlib.resources
 import os
 import shutil
 import subprocess
@@ -130,6 +131,9 @@ def setup(
     # Prompt for Docker setup
     warning("\nDo you want to set up the Docker environment?")
     if typer.confirm("Continue with Docker setup?", default=True):
+        # Set up Docker files first
+        _setup_docker_files(cfg, community_only=community)
+
         success("\nBuilding Docker image...")
         from odoo_dev.commands.docker import build
 
@@ -225,25 +229,23 @@ def vscode(cfg=None) -> None:
     vscode_dir = cfg.project_dir / ".vscode"
     vscode_dir.mkdir(exist_ok=True)
 
-    template_dir = cfg.script_dir / "templates" / "vscode"
+    # Get the templates directory from the package
+    templates = importlib.resources.files("odoo_dev.templates.vscode")
 
     # Copy template files
-    import shutil
-
     for template_file in ["launch.json", "tasks.json"]:
-        src = template_dir / template_file
+        template_content = templates.joinpath(template_file).read_text()
         dst = vscode_dir / template_file
-        if src.exists():
-            shutil.copy(src, dst)
-            success(f"Copied {template_file}")
+        dst.write_text(template_content)
+        success(f"Copied {template_file}")
 
     # Only copy settings.json if it doesn't exist
-    settings_src = template_dir / "settings.json"
     settings_dst = vscode_dir / "settings.json"
-    if settings_src.exists() and not settings_dst.exists():
-        shutil.copy(settings_src, settings_dst)
+    if not settings_dst.exists():
+        settings_content = templates.joinpath("settings.json").read_text()
+        settings_dst.write_text(settings_content)
         success("Copied settings.json")
-    elif settings_dst.exists():
+    else:
         warning("settings.json already exists. Skipping.")
 
     success("VSCode configuration set up successfully!")
@@ -314,6 +316,85 @@ db_password = odoo
     conf_file.write_text(config_content)
     conf_file.chmod(0o600)
     success(f"Config file created at {conf_file}")
+
+
+def _setup_docker_files(cfg, community_only: bool = False) -> None:
+    """Copy Docker templates to .odoo-deploy directory."""
+    success("Setting up Docker files...")
+
+    # Create .odoo-deploy directory
+    cfg.script_dir.mkdir(exist_ok=True)
+
+    # Get the templates directory from the package
+    templates = importlib.resources.files("odoo_dev.templates.docker")
+
+    # Copy Dockerfile and docker-entrypoint.sh
+    for filename in ["Dockerfile", "docker-entrypoint.sh"]:
+        template_content = templates.joinpath(filename).read_text()
+        dest = cfg.script_dir / filename
+        dest.write_text(template_content)
+        if filename.endswith(".sh"):
+            dest.chmod(0o755)
+        success(f"Copied {filename}")
+
+    # Create Docker odoo.conf
+    _setup_docker_odoo_config(cfg, community_only=community_only)
+
+
+def _generate_docker_odoo_conf(community_only: bool = False) -> str:
+    """Generate Docker-specific odoo.conf content."""
+    # Build addons path for Docker (using /opt/project paths)
+    addons_paths = [
+        "/opt/project/odoo/addons",
+        "/opt/project/odoo/odoo/addons",
+    ]
+
+    if not community_only:
+        addons_paths.append("/opt/project/enterprise")
+
+    addons_paths.extend(
+        [
+            "/opt/project/design-themes",
+            "/opt/project/industry",
+            "/opt/project/addons",
+        ]
+    )
+
+    return f"""[options]
+addons_path = {",".join(addons_paths)}
+admin_passwd = admin
+db_host = db
+db_port = 5432
+db_user = odoo
+db_password = odoo
+http_port = 8069
+gevent_port = 8072
+proxy_mode = True
+dev_mode = True
+log_level = info
+list_db = True
+limit_memory_hard = 0
+limit_memory_soft = 2147483648
+limit_time_cpu = 600
+limit_time_real = 1200
+workers = 0
+max_cron_threads = 1
+data_dir = /opt/odoo-filestore
+"""
+
+
+def _setup_docker_odoo_config(cfg, community_only: bool = False) -> None:
+    """Create Docker-specific odoo.conf configuration file."""
+    conf_file = cfg.docker_config_file
+
+    if conf_file.exists():
+        warning(f"Docker config file already exists at {conf_file}")
+        return
+
+    success("Creating Docker Odoo configuration file...")
+    conf_file.write_text(_generate_docker_odoo_conf(community_only=community_only))
+    conf_file.chmod(0o600)
+    success(f"Docker config file created at {conf_file}")
 
 
 def _clone_odoo_repos(cfg, community_only: bool = False) -> None:

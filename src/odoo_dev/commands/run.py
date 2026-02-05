@@ -17,10 +17,12 @@ def run(
         str | None, typer.Option("-d", "--database", help="Database name")
     ] = None,
     install: Annotated[
-        str | None, typer.Option("-i", "--init", help="Modules to install (comma-separated)")
+        str | None,
+        typer.Option("-i", "--init", help="Modules to install (comma-separated)"),
     ] = None,
     update: Annotated[
-        str | None, typer.Option("-u", "--update", help="Modules to update (comma-separated)")
+        str | None,
+        typer.Option("-u", "--update", help="Modules to update (comma-separated)"),
     ] = None,
     dev: Annotated[
         str | None,
@@ -29,9 +31,7 @@ def run(
     debug: Annotated[
         bool, typer.Option("--debug", help="Enable debugpy for VSCode debugging")
     ] = False,
-    port: Annotated[
-        int, typer.Option("-p", "--port", help="HTTP port")
-    ] = 8069,
+    port: Annotated[int, typer.Option("-p", "--port", help="HTTP port")] = 8069,
 ) -> None:
     """Run Odoo locally."""
     cfg = load_config()
@@ -352,9 +352,9 @@ def test(
             [
                 str(venv_python),
                 str(cfg.odoo_bin),
-                "db",
                 "-c",
                 str(cfg.config_file),
+                "db",
                 "drop",
                 db_name,
             ],

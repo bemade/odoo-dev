@@ -24,12 +24,10 @@ class TestFindAvailablePort:
 class TestGetAddonsPath:
     def test_extracts_addons_path(self, tmp_path: Path):
         config_file = tmp_path / "odoo.conf"
-        config_file.write_text(
-            """[options]
+        config_file.write_text("""[options]
 addons_path = /opt/odoo/addons,/opt/odoo/enterprise
 admin_passwd = admin
-"""
-        )
+""")
 
         result = _get_addons_path(config_file)
         assert result == "/opt/odoo/addons,/opt/odoo/enterprise"

@@ -3,7 +3,13 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from odoo_dev.commands.setup import _clean, _update_env_file
+from odoo_dev.commands.setup import (
+    _clean,
+    _setup_docker_files,
+    _update_env_file,
+    vscode,
+)
+from odoo_dev.config import ProjectConfig
 
 
 class TestUpdateEnvFile:
@@ -82,3 +88,110 @@ class TestClean:
             _clean()  # Should not raise
 
         assert not (tmp_path / "odoo").exists()
+
+
+def _make_cfg(tmp_path: Path) -> ProjectConfig:
+    """Create a ProjectConfig pointing at tmp_path."""
+    return ProjectConfig(
+        project_dir=tmp_path,
+        script_dir=tmp_path / ".odoo-deploy",
+        odoo_version="19.0",
+        python_version="3.12",
+        project_name="test-project",
+    )
+
+
+class TestSetupDockerFiles:
+    """Test _setup_docker_files copies templates correctly."""
+
+    def test_creates_odoo_deploy_directory(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        assert cfg.script_dir.exists()
+        assert cfg.script_dir.is_dir()
+
+    def test_copies_dockerfile(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        dockerfile = cfg.script_dir / "Dockerfile"
+        assert dockerfile.exists()
+        content = dockerfile.read_text()
+        assert "FROM python:" in content
+        assert "ENTRYPOINT" in content
+
+    def test_copies_entrypoint(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        entrypoint = cfg.script_dir / "docker-entrypoint.sh"
+        assert entrypoint.exists()
+        content = entrypoint.read_text()
+        assert "#!/bin/bash" in content
+        # Should be executable
+        assert entrypoint.stat().st_mode & 0o755
+
+    def test_creates_docker_odoo_conf(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        conf = cfg.docker_config_file
+        assert conf.exists()
+        content = conf.read_text()
+        assert "/opt/project/" in content
+        assert "db_host = db" in content
+
+    def test_docker_conf_includes_enterprise_by_default(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        content = cfg.docker_config_file.read_text()
+        assert "/opt/project/enterprise" in content
+
+    def test_docker_conf_excludes_enterprise_for_community(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg, community_only=True)
+        content = cfg.docker_config_file.read_text()
+        assert "/opt/project/enterprise" not in content
+
+    def test_does_not_overwrite_existing_docker_conf(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        cfg.script_dir.mkdir(parents=True)
+        cfg.docker_config_file.write_text("existing config")
+        _setup_docker_files(cfg)
+        assert cfg.docker_config_file.read_text() == "existing config"
+
+
+class TestVscodeSetup:
+    """Test vscode() copies templates correctly."""
+
+    def test_creates_vscode_directory(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        vscode(cfg)
+        assert (tmp_path / ".vscode").exists()
+
+    def test_copies_launch_json(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        vscode(cfg)
+        launch = tmp_path / ".vscode" / "launch.json"
+        assert launch.exists()
+        content = launch.read_text()
+        assert "configurations" in content
+
+    def test_copies_tasks_json(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        vscode(cfg)
+        tasks = tmp_path / ".vscode" / "tasks.json"
+        assert tasks.exists()
+        content = tasks.read_text()
+        assert "tasks" in content
+
+    def test_copies_settings_json(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        vscode(cfg)
+        settings = tmp_path / ".vscode" / "settings.json"
+        assert settings.exists()
+
+    def test_does_not_overwrite_existing_settings(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        (vscode_dir / "settings.json").write_text("custom settings")
+        vscode(cfg)
+        assert (vscode_dir / "settings.json").read_text() == "custom settings"

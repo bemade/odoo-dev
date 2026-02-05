@@ -35,6 +35,7 @@ def _main(
     """Odoo Development Environment Helper."""
     pass
 
+
 # Command groups
 app.add_typer(db.app, name="db")
 app.add_typer(docker.app, name="docker")

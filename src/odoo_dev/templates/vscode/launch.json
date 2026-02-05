@@ -1,0 +1,208 @@
+{
+    "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "modules",
+            "description": "Module name to update (comma-separated for multiple, or 'all')",
+            "default": "all",
+            "type": "promptString"
+        },
+        {
+            "id": "database",
+            "description": "Database to upgrade.",
+            "default": "",
+            "type": "promptString"
+        },
+        {
+            "id": "testTags",
+            "description": "Test tag to pass to odoo-bin command",
+            "default": "",
+            "type": "promptString"
+        }
+    ],
+    "configurations": [
+        {
+            "name": "Odoo Local: Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/odoo/odoo-bin",
+            "console": "integratedTerminal",
+            "args": [
+                "-c",
+                "${workspaceFolder}/conf/odoo.conf"
+            ],
+            "env": {
+                "PYTHONWARNINGS": "ignore:FutureWarning",
+                "GEVENT_SUPPORT": "True"
+            }
+        },
+        {
+            "name": "Odoo Local: Upgrade",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/odoo/odoo-bin",
+            "console": "integratedTerminal",
+            "args": [
+                "-c",
+                "${workspaceFolder}/conf/odoo.conf",
+                "-u",
+                "${input:modules}",
+                "-d",
+                "${input:database}",
+                "--no-http",
+                "--stop-after-init"
+            ],
+            "env": {
+                "PYTHONWARNINGS": "ignore:FutureWarning",
+                "GEVENT_SUPPORT": "True"
+            }
+        },
+        {
+            "name": "Odoo Local: Integration Test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/odoo/odoo-bin",
+            "console": "integratedTerminal",
+            "args": [
+                "-c",
+                "${workspaceFolder}/conf/odoo.conf",
+                "-u",
+                "${input:modules}",
+                "-i",
+                "${input:modules}",
+                "--test-enable",
+                "-d",
+                "${input:database}",
+                "--stop-after-init",
+                "--no-http"
+            ],
+            "env": {
+                "PYTHONWARNINGS": "ignore:FutureWarning",
+                "GEVENT_SUPPORT": "True"
+            }
+        },
+        {
+            "name": "Odoo Local: Test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/odoo/odoo-bin",
+            "console": "integratedTerminal",
+            "args": [
+                "-c",
+                "${workspaceFolder}/conf/odoo.conf",
+                "-u",
+                "${input:modules}",
+                "-i",
+                "${input:modules}",
+                "--test-tags",
+                "${input:testTags}",
+                "-d",
+                "${input:database}",
+                "--stop-after-init",
+                "--no-http"
+            ],
+            "env": {
+                "PYTHONWARNINGS": "ignore:FutureWarning",
+                "GEVENT_SUPPORT": "True"
+            }
+        },
+        {
+            "name": "Odoo Docker: Debug",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "port": 5678,
+                "host": "localhost"
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/opt/project"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/odoo",
+                    "remoteRoot": "/opt/project/odoo"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/enterprise",
+                    "remoteRoot": "/opt/project/enterprise"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/addons",
+                    "remoteRoot": "/opt/project/addons"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/industry",
+                    "remoteRoot": "/opt/project/industry"
+                }
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Odoo Docker: Update Module",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "port": 5678,
+                "host": "localhost"
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/opt/project"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/odoo",
+                    "remoteRoot": "/opt/project/odoo"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/enterprise",
+                    "remoteRoot": "/opt/project/enterprise"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/addons",
+                    "remoteRoot": "/opt/project/addons"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/industry",
+                    "remoteRoot": "/opt/project/industry"
+                }
+            ],
+            "preLaunchTask": "Update Module",
+            "justMyCode": false
+        },
+        {
+            "name": "Odoo Docker: Shell",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "port": 5678,
+                "host": "localhost"
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/opt/project"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/odoo",
+                    "remoteRoot": "/opt/project/odoo"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/enterprise",
+                    "remoteRoot": "/opt/project/enterprise"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/addons",
+                    "remoteRoot": "/opt/project/addons"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/industry",
+                    "remoteRoot": "/opt/project/industry"
+                }
+            ],
+            "preLaunchTask": "Start Odoo Shell",
+            "justMyCode": false
+        }
+    ]
+}
