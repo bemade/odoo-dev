@@ -121,4 +121,4 @@ uv build
 
 ## License
 
-MIT
+LGPL-3. For complete license terms, visit https://www.gnu.org/licenses/lgpl-3.0.en.html
