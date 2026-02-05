@@ -1,0 +1,364 @@
+"""Setup commands for initializing Odoo development environment."""
+
+import subprocess
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from odoo_dev.config import load_config
+from odoo_dev.utils.console import error, success, warning
+
+
+def setup(
+    community: bool = typer.Option(
+        False, "--community", help="Set up Community edition only (skip Enterprise repos)"
+    ),
+) -> None:
+    """Complete setup: clone Odoo repos, configure VSCode, build image."""
+    cfg = load_config()
+
+    success("Setting up complete Odoo development environment...")
+
+    # Initialize/update git submodules first
+    _init_submodules(cfg)
+
+    # Clone/update Odoo repositories
+    if community:
+        warning("Setting up Community Edition")
+    _clone_odoo_repos(cfg, community_only=community)
+
+    # Set up VSCode configuration
+    success("\nSetting up VSCode configuration...")
+    vscode(cfg)
+
+    # Set up local virtual environment
+    success("\nSetting up local Python virtual environment...")
+    warning(f"This will install system dependencies and Python {cfg.python_version} if needed")
+    setup_venv()
+
+    # Prompt for Docker setup
+    warning("\nDo you want to set up the Docker environment?")
+    if typer.confirm("Continue with Docker setup?", default=True):
+        success("\nBuilding Docker image...")
+        from odoo_dev.commands.docker import build
+        build(community=community)
+    else:
+        warning("Skipping Docker setup. Run 'odoo-dev build' later.")
+
+    success("\nSetup complete! You can now:")
+    success("  - Start Odoo with Docker: odoo-dev start")
+    success("  - Use local Python environment: source .venv/bin/activate")
+    success("  - Debug with VSCode: Use the configured launch profiles")
+
+
+def setup_venv() -> None:
+    """Set up local Python virtual environment for development."""
+    cfg = load_config()
+
+    # Create config file first
+    _setup_odoo_config(cfg)
+
+    success(f"Setting up Python virtual environment for Odoo {cfg.odoo_version}...")
+
+    # Install system dependencies
+    _install_system_dependencies()
+
+    # Ensure uv is available
+    if subprocess.run(["which", "uv"], capture_output=True).returncode != 0:
+        success("Installing uv package manager...")
+        subprocess.run(
+            ["curl", "-LsSf", "https://astral.sh/uv/install.sh"],
+            stdout=subprocess.PIPE,
+        )
+        # Would pipe to sh, but let's be explicit
+        warning("Please install uv manually: curl -LsSf https://astral.sh/uv/install.sh | sh")
+
+    # Create virtual environment
+    if not cfg.venv_path.exists():
+        success("Creating new Python virtual environment...")
+        subprocess.run(
+            ["uv", "venv", str(cfg.venv_path), "--python", cfg.python_version],
+            check=True,
+        )
+    else:
+        warning("Virtual environment already exists. Skipping creation.")
+
+    # Update PYTHONPATH in activate script
+    _update_python_path(cfg)
+
+    # Install requirements
+    venv_pip = ["uv", "pip", "install", "--python", str(cfg.venv_path / "bin" / "python")]
+
+    # Install Odoo requirements
+    odoo_requirements = cfg.project_dir / "odoo" / "requirements.txt"
+    if odoo_requirements.exists():
+        success("Installing Odoo requirements...")
+        # Create temp requirements with psycopg2-binary substitution
+        temp_req = cfg.project_dir / "temp_requirements.txt"
+        content = odoo_requirements.read_text()
+        content = content.replace("psycopg2==", "psycopg2-binary>=")
+        temp_req.write_text(content)
+        subprocess.run([*venv_pip, "-r", str(temp_req)])
+        temp_req.unlink()
+
+    # Install project requirements
+    project_requirements = cfg.project_dir / "requirements.txt"
+    if project_requirements.exists():
+        success("Installing project requirements...")
+        subprocess.run([*venv_pip, "-r", str(project_requirements)])
+
+    # Install dev tools
+    success("Installing development tools...")
+    subprocess.run([*venv_pip, "pytest", "pytest-odoo", "debugpy", "manifestoo", "coverage"])
+
+    success("\nVirtual environment setup complete!")
+    success(f"To activate: source {cfg.venv_path}/bin/activate")
+
+
+def vscode(cfg=None) -> None:
+    """Set up VSCode configuration for debugging."""
+    if cfg is None:
+        cfg = load_config()
+
+    vscode_dir = cfg.project_dir / ".vscode"
+    vscode_dir.mkdir(exist_ok=True)
+
+    template_dir = cfg.script_dir / "templates" / "vscode"
+
+    # Copy template files
+    import shutil
+
+    for template_file in ["launch.json", "tasks.json"]:
+        src = template_dir / template_file
+        dst = vscode_dir / template_file
+        if src.exists():
+            shutil.copy(src, dst)
+            success(f"Copied {template_file}")
+
+    # Only copy settings.json if it doesn't exist
+    settings_src = template_dir / "settings.json"
+    settings_dst = vscode_dir / "settings.json"
+    if settings_src.exists() and not settings_dst.exists():
+        shutil.copy(settings_src, settings_dst)
+        success("Copied settings.json")
+    elif settings_dst.exists():
+        warning("settings.json already exists. Skipping.")
+
+    success("VSCode configuration set up successfully!")
+
+
+def _init_submodules(cfg) -> None:
+    """Initialize and update git submodules if present."""
+    gitmodules = cfg.project_dir / ".gitmodules"
+
+    if not gitmodules.exists():
+        return
+
+    success("Initializing git submodules...")
+
+    result = subprocess.run(
+        ["git", "submodule", "update", "--init", "--recursive"],
+        cwd=cfg.project_dir,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode == 0:
+        success("Git submodules initialized.")
+    else:
+        warning(f"Submodule initialization had issues: {result.stderr}")
+
+
+def _setup_odoo_config(cfg, community_only: bool = False) -> None:
+    """Create odoo.conf configuration file."""
+    conf_dir = cfg.project_dir / "conf"
+    conf_file = conf_dir / "odoo.conf"
+
+    # Create conf directory
+    conf_dir.mkdir(exist_ok=True)
+
+    if conf_file.exists():
+        warning(f"Config file already exists at {conf_file}")
+        return
+
+    success("Creating Odoo configuration file...")
+
+    # Build addons path
+    addons_paths = [
+        str(cfg.project_dir / "odoo" / "addons"),
+        str(cfg.project_dir / "odoo" / "odoo" / "addons"),
+    ]
+
+    if not community_only:
+        addons_paths.append(str(cfg.project_dir / "enterprise"))
+
+    addons_paths.extend([
+        str(cfg.project_dir / "design-themes"),
+        str(cfg.project_dir / "addons"),
+    ])
+
+    # Filter to only existing paths
+    addons_paths = [p for p in addons_paths if Path(p).exists()]
+
+    config_content = f"""[options]
+addons_path = {",".join(addons_paths)}
+admin_passwd = admin
+db_user = odoo
+db_password = odoo
+"""
+
+    conf_file.write_text(config_content)
+    conf_file.chmod(0o600)
+    success(f"Config file created at {conf_file}")
+
+
+def _clone_odoo_repos(cfg, community_only: bool = False) -> None:
+    """Clone or update Odoo repositories."""
+    success("Setting up Odoo repositories...")
+
+    if community_only:
+        warning("Community edition mode: Enterprise repositories will be skipped")
+
+    repos = [
+        (f"git@github.com:odoo/odoo.git", "odoo", cfg.odoo_version),
+        (f"git@github.com:odoo/design-themes.git", "design-themes", cfg.odoo_version),
+    ]
+
+    # Add enterprise if not community only
+    if not community_only:
+        repos.append(
+            (f"git@github.com:odoo/enterprise.git", "enterprise", cfg.odoo_version)
+        )
+
+    # Add industry for Odoo 18+
+    if cfg.odoo_version.startswith("18") or cfg.odoo_version.startswith("19"):
+        repos.append(
+            (f"git@github.com:odoo/industry.git", "industry", cfg.odoo_version)
+        )
+
+    for repo_url, repo_dir, branch in repos:
+        repo_path = cfg.project_dir / repo_dir
+
+        if repo_path.exists():
+            warning(f"Updating {repo_dir} repository...")
+            subprocess.run(
+                ["git", "fetch", "--depth", "1", "origin", branch],
+                cwd=repo_path,
+            )
+            subprocess.run(["git", "checkout", branch], cwd=repo_path)
+            subprocess.run(
+                ["git", "pull", "--ff-only", "origin", branch],
+                cwd=repo_path,
+            )
+        else:
+            warning(f"Cloning {repo_dir} repository...")
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    branch,
+                    repo_url,
+                    str(repo_path),
+                ],
+                cwd=cfg.project_dir,
+            )
+
+    success("Odoo repositories setup complete.")
+
+
+def _install_system_dependencies() -> None:
+    """Install system dependencies based on OS."""
+    import platform
+
+    system = platform.system()
+
+    if system == "Darwin":
+        success("Installing dependencies for macOS...")
+        subprocess.run(
+            [
+                "brew",
+                "install",
+                "postgresql",
+                "libpq",
+                "openssl",
+                "libxml2",
+                "libxslt",
+            ],
+            check=False,
+        )
+    elif system == "Linux":
+        success("Installing dependencies for Linux...")
+        subprocess.run(
+            [
+                "sudo",
+                "apt-get",
+                "update",
+            ],
+            check=False,
+        )
+        subprocess.run(
+            [
+                "sudo",
+                "apt-get",
+                "install",
+                "-y",
+                "--no-install-recommends",
+                "build-essential",
+                "libldap2-dev",
+                "libpq-dev",
+                "libsasl2-dev",
+                "libssl-dev",
+                "libxml2-dev",
+                "libxslt1-dev",
+                "postgresql-client",
+            ],
+            check=False,
+        )
+    else:
+        warning(f"Unsupported OS: {system}. Please install dependencies manually.")
+
+
+def _update_python_path(cfg) -> None:
+    """Update PYTHONPATH in venv activate script."""
+    activate_script = cfg.venv_path / "bin" / "activate"
+
+    if not activate_script.exists():
+        return
+
+    content = activate_script.read_text()
+
+    # Check if already modified
+    if "# Odoo PYTHONPATH setup" in content:
+        return
+
+    pythonpath_setup = '''
+# Odoo PYTHONPATH setup
+if [ -z "$_OLD_VIRTUAL_PYTHONPATH" ]; then
+    _OLD_VIRTUAL_PYTHONPATH="$PYTHONPATH"
+fi
+
+ODOO_PYTHONPATH=""
+for dir in "odoo" "enterprise" "design-themes" "industry" "addons"; do
+    if [ -d "$VIRTUAL_ENV/../$dir" ]; then
+        if [ -z "$ODOO_PYTHONPATH" ]; then
+            ODOO_PYTHONPATH="$VIRTUAL_ENV/../$dir"
+        else
+            ODOO_PYTHONPATH="$ODOO_PYTHONPATH:$VIRTUAL_ENV/../$dir"
+        fi
+    fi
+done
+
+if [ -n "$ODOO_PYTHONPATH" ]; then
+    PYTHONPATH="$ODOO_PYTHONPATH${_OLD_VIRTUAL_PYTHONPATH:+:$_OLD_VIRTUAL_PYTHONPATH}"
+    export PYTHONPATH
+fi
+# End Odoo PYTHONPATH setup
+'''
+
+    content += pythonpath_setup
+    activate_script.write_text(content)
+    success("PYTHONPATH updated in virtual environment activation script.")

@@ -1,0 +1,38 @@
+[project]
+name = "odoo-dev"
+version = "0.1.0"
+description = "Odoo Development Environment Helper"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+odoo-dev = "odoo_dev.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+testpaths = ["tests"]
+norecursedirs = [
+    "tests/fixtures/odoo-empty/odoo",
+    "tests/fixtures/odoo-empty/enterprise",
+    "tests/fixtures/odoo-empty/design-themes",
+    "tests/fixtures/odoo-empty/industry",
+    "tests/fixtures/odoo-empty/.venv",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odoo_dev"]

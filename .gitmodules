@@ -1,0 +1,3 @@
+[submodule "tests/fixtures/odoo-empty"]
+	path = tests/fixtures/odoo-empty
+	url = git@git.bemade.org:bemade/odoo-empty
