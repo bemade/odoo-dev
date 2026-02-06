@@ -304,6 +304,7 @@ def test(
             "-m",
             "coverage",
             "run",
+            "--branch",
             f"--source={coverage_source}",
             str(cfg.odoo_bin),
         ]
