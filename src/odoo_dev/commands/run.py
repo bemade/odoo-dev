@@ -181,7 +181,11 @@ def test(
         str | None, typer.Option("-d", "--database", help="Test database name")
     ] = None,
     test_tags: Annotated[
-        str | None, typer.Option("--test-tags", help="Test tags to filter")
+        str | None,
+        typer.Option(
+            "--test-tags",
+            help="Test tags to filter: \\[tag]\\[/module]\\[:class]\\[.method]",
+        ),
     ] = None,
     coverage: Annotated[
         bool, typer.Option("--coverage/--no-coverage", help="Enable coverage reporting")
