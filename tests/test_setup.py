@@ -158,6 +158,56 @@ class TestSetupDockerFiles:
         assert cfg.docker_config_file.read_text() == "existing config"
 
 
+class TestInitSubmodules:
+    """Test _init_submodules is called correctly from setup_venv."""
+
+    def test_setup_venv_calls_init_submodules(self, tmp_path: Path):
+        """setup_venv should initialize submodules before setting up the venv."""
+        from unittest.mock import call, patch
+
+        cfg = _make_cfg(tmp_path)
+        # Create .gitmodules to trigger the submodule check
+        (tmp_path / ".gitmodules").write_text("[submodule]\n")
+
+        with patch("odoo_dev.commands.setup.load_config", return_value=cfg), \
+             patch("odoo_dev.commands.setup._init_submodules") as mock_init, \
+             patch("odoo_dev.commands.setup._setup_odoo_config"), \
+             patch("odoo_dev.commands.setup._install_system_dependencies"), \
+             patch("odoo_dev.commands.setup._update_python_path"), \
+             patch("subprocess.run", return_value=type("R", (), {"returncode": 0})()):
+            from odoo_dev.commands.setup import setup_venv
+            setup_venv()
+
+        mock_init.assert_called_once_with(cfg)
+
+    def test_init_submodules_skips_if_no_gitmodules(self, tmp_path: Path):
+        """_init_submodules should do nothing if .gitmodules does not exist."""
+        from odoo_dev.commands.setup import _init_submodules
+
+        cfg = _make_cfg(tmp_path)
+        with patch("subprocess.run") as mock_run:
+            _init_submodules(cfg)
+        mock_run.assert_not_called()
+
+    def test_init_submodules_runs_git_command(self, tmp_path: Path):
+        """_init_submodules should run git submodule update when .gitmodules exists."""
+        from odoo_dev.commands.setup import _init_submodules
+
+        cfg = _make_cfg(tmp_path)
+        (tmp_path / ".gitmodules").write_text("[submodule]\n")
+
+        with patch("subprocess.run", return_value=type("R", (), {"returncode": 0, "stderr": ""})()) as mock_run:
+            _init_submodules(cfg)
+
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "git" in args
+        assert "submodule" in args
+        assert "update" in args
+        assert "--init" in args
+        assert "--recursive" in args
+
+
 class TestVscodeSetup:
     """Test vscode() copies templates correctly."""
 
