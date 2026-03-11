@@ -353,18 +353,7 @@ def test(
     # Clean up test database
     if not keep_db:
         success(f"Cleaning up: {db_name}")
-        subprocess.run(
-            [
-                str(venv_python),
-                str(cfg.odoo_bin),
-                "-c",
-                str(cfg.config_file),
-                "db",
-                "drop",
-                db_name,
-            ],
-            capture_output=True,
-        )
+        _drop_database(cfg, db_name)
     else:
         info(f"Keeping test database: {db_name}")
 
@@ -411,6 +400,34 @@ def scaffold(
     else:
         error("Failed to create module")
         raise typer.Exit(result.returncode)
+
+
+def _drop_database(cfg, db_name: str) -> None:
+    """Drop a PostgreSQL database, reading connection params from odoo.conf."""
+    import configparser
+
+    parser = configparser.ConfigParser()
+    parser.read(cfg.config_file)
+    opts = dict(parser.get("options", {}) if parser.has_section("options") else {})
+
+    cmd = ["dropdb", "--if-exists"]
+    if host := opts.get("db_host"):
+        cmd += ["-h", host]
+    if port := opts.get("db_port"):
+        cmd += ["-p", port]
+    if user := opts.get("db_user"):
+        cmd += ["-U", user]
+    cmd.append(db_name)
+
+    env = os.environ.copy()
+    if password := opts.get("db_password"):
+        env["PGPASSWORD"] = password
+
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode == 0:
+        success(f"Dropped test database: {db_name}")
+    else:
+        warning(f"Could not drop database {db_name}: {result.stderr.strip()}")
 
 
 def _get_addons_path(config_file) -> str:

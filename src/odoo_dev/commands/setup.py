@@ -151,6 +151,9 @@ def setup_venv() -> None:
     """Set up local Python virtual environment for development."""
     cfg = load_config()
 
+    # Initialize submodules before anything else
+    _init_submodules(cfg)
+
     # Create config file first
     _setup_odoo_config(cfg)
 
