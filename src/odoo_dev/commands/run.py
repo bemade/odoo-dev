@@ -413,6 +413,7 @@ def scaffold(
         raise typer.Exit(result.returncode)
 
 
+
 def _get_addons_path(config_file) -> str:
     """Extract addons_path from odoo.conf."""
     for line in config_file.read_text().splitlines():
