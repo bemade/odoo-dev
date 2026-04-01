@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -191,13 +192,52 @@ def test(
         bool, typer.Option("--coverage/--no-coverage", help="Enable coverage reporting")
     ] = True,
     keep_db: Annotated[
-        bool, typer.Option("--keep-db", help="Keep test database after tests")
+        bool, typer.Option("--keep-db/--no-keep-db", help="Keep test database after tests")
     ] = False,
+    exclude: Annotated[
+        str | None,
+        typer.Option(
+            "--exclude",
+            help="Modules to exclude from auto-discovery (comma-separated). "
+            "Defaults to the 'no_ci' list in repo_deps.yaml if present.",
+        ),
+    ] = None,
 ) -> None:
     """Run tests for specified modules."""
     import time
 
     cfg = load_config()
+
+    # Find repo_deps.yaml (used for both exclusions and dependency cloning)
+    repo_deps_file: Path | None = None
+    candidates = [
+        cfg.project_dir / "repo_deps.yaml",
+        Path("repo_deps.yaml"),
+    ]
+    # Also check the real source dir of addons (handles symlinked addons dirs)
+    addons_dir = cfg.project_dir / "addons"
+    if addons_dir.is_dir():
+        for entry in addons_dir.iterdir():
+            if entry.is_symlink():
+                candidates.append(entry.resolve().parent / "repo_deps.yaml")
+                break
+    for candidate in candidates:
+        if candidate.exists():
+            repo_deps_file = candidate
+            break
+
+    # Auto-load exclusions from repo_deps.yaml when not explicitly provided
+    if exclude is None and repo_deps_file is not None:
+        try:
+            import yaml
+
+            data = yaml.safe_load(repo_deps_file.read_text()) or {}
+            no_ci = data.get("no_ci", [])
+            if no_ci:
+                exclude = ",".join(no_ci)
+                info(f"Excluding (from {repo_deps_file} no_ci): {exclude}")
+        except Exception:
+            pass
 
     # Verify setup
     if not cfg.venv_path.exists():
@@ -219,16 +259,18 @@ def test(
     # Determine modules to test
     if modules is None:
         # Use manifestoo to list addons in the addons directory
+        manifestoo_cmd = [
+            str(venv_python),
+            "-m",
+            "manifestoo",
+            "--select-addons-dir",
+            str(cfg.addons_dir),
+        ]
+        if exclude:
+            manifestoo_cmd.extend(["--select-exclude", exclude])
+        manifestoo_cmd.extend(["list", "--separator=,"])
         result = subprocess.run(
-            [
-                str(venv_python),
-                "-m",
-                "manifestoo",
-                "--select-addons-dir",
-                str(cfg.addons_dir),
-                "list",
-                "--separator=,",
-            ],
+            manifestoo_cmd,
             capture_output=True,
             text=True,
             env={**os.environ, "ODOO_VERSION": "", "ODOO_SERIES": ""},
@@ -237,6 +279,33 @@ def test(
         if not modules:
             error(f"No addons found in {cfg.addons_dir}")
             raise typer.Exit(1)
+
+    # Clone external repo dependencies declared in repo_deps.yaml and symlink into addons_dir
+    if repo_deps_file is not None and repo_deps_file.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(repo_deps_file.read_text()) or {}
+            for repo_url, addon_names in data.get("repos", {}).items():
+                clone_dir = Path("/tmp") / f"odoo_dev_dep_{abs(hash(repo_url))}"
+                if not clone_dir.exists():
+                    branch = os.environ.get("ODOO_VERSION", cfg.odoo_version)
+                    result = subprocess.run(
+                        ["git", "clone", "--depth=1", "-b", branch, repo_url, str(clone_dir)],
+                        capture_output=True,
+                    )
+                    if result.returncode != 0:
+                        subprocess.run(
+                            ["git", "clone", "--depth=1", repo_url, str(clone_dir)],
+                            capture_output=True,
+                        )
+                for addon in addon_names:
+                    src = clone_dir / addon
+                    dst = cfg.addons_dir / addon
+                    if src.is_dir() and not dst.exists():
+                        dst.symlink_to(src)
+        except Exception as e:
+            warning(f"Could not clone repo dependencies: {e}")
 
     # Get full addons path from config
     addons_path = _get_addons_path(cfg.config_file)
@@ -290,83 +359,75 @@ def test(
 
     if result.returncode != 0:
         error("Failed to install dependencies")
+        if not keep_db:
+            _drop_database(cfg, db_name)
         raise typer.Exit(1)
 
     # Step 2: Run tests
-    success(f"Running tests: {modules}")
+    test_exit_code = 1
+    try:
+        success(f"Running tests: {modules}")
 
-    if coverage:
-        # Build coverage source paths
-        coverage_source = ",".join(str(cfg.addons_dir / m) for m in modules.split(","))
+        if coverage:
+            # Build coverage source paths
+            coverage_source = ",".join(str(cfg.addons_dir / m) for m in modules.split(","))
 
-        test_cmd = [
-            str(venv_python),
-            "-m",
-            "coverage",
-            "run",
-            "--branch",
-            f"--source={coverage_source}",
-            str(cfg.odoo_bin),
-        ]
-    else:
-        test_cmd = [str(venv_python), str(cfg.odoo_bin)]
-
-    test_cmd.extend(
-        [
-            "-c",
-            str(cfg.config_file),
-            "-d",
-            db_name,
-            "-i",
-            modules,
-            "-u",
-            modules,
-            "--test-enable",
-            "--stop-after-init",
-            "--http-port",
-            str(http_port),
-        ]
-    )
-
-    if test_tags:
-        test_cmd.extend(["--test-tags", test_tags])
-
-    result = subprocess.run(test_cmd)
-    test_exit_code = result.returncode
-
-    # Generate coverage report
-    if coverage:
-        success("Coverage report:")
-        subprocess.run([str(venv_python), "-m", "coverage", "report"])
-        subprocess.run(
-            [
+            test_cmd = [
                 str(venv_python),
                 "-m",
                 "coverage",
-                "html",
-                "-d",
-                str(cfg.project_dir / "coverage_html"),
-            ]
-        )
-        info(f"HTML report: {cfg.project_dir / 'coverage_html' / 'index.html'}")
-
-    # Clean up test database
-    if not keep_db:
-        success(f"Cleaning up: {db_name}")
-        subprocess.run(
-            [
-                str(venv_python),
+                "run",
+                "--branch",
+                f"--source={coverage_source}",
                 str(cfg.odoo_bin),
+            ]
+        else:
+            test_cmd = [str(venv_python), str(cfg.odoo_bin)]
+
+        test_cmd.extend(
+            [
                 "-c",
                 str(cfg.config_file),
-                "db",
-                "drop",
+                "-d",
                 db_name,
-            ],
-            capture_output=True,
+                "-i",
+                modules,
+                "-u",
+                modules,
+                "--test-enable",
+                "--stop-after-init",
+                "--http-port",
+                str(http_port),
+            ]
         )
-    else:
-        info(f"Keeping test database: {db_name}")
+
+        if test_tags:
+            test_cmd.extend(["--test-tags", test_tags])
+
+        result = subprocess.run(test_cmd)
+        test_exit_code = result.returncode
+
+        # Generate coverage report
+        if coverage:
+            success("Coverage report:")
+            subprocess.run([str(venv_python), "-m", "coverage", "report"])
+            subprocess.run(
+                [
+                    str(venv_python),
+                    "-m",
+                    "coverage",
+                    "html",
+                    "-d",
+                    str(cfg.project_dir / "coverage_html"),
+                ]
+            )
+            info(f"HTML report: {cfg.project_dir / 'coverage_html' / 'index.html'}")
+    finally:
+        # Clean up test database
+        if not keep_db:
+            _drop_database(cfg, db_name)
+        else:
+            info(f"Keeping test database: {db_name}")
 
     if test_exit_code == 0:
         success("=== All tests passed! ===")
@@ -413,6 +474,78 @@ def scaffold(
         raise typer.Exit(result.returncode)
 
 
+def _drop_database(cfg, db_name: str) -> None:
+    """Drop a test database, trying odoo-bin first, then falling back to dropdb."""
+    success(f"Cleaning up: {db_name}")
+    venv_python = cfg.venv_path / "bin" / "python"
+
+    # Try odoo-bin db drop first
+    try:
+        result = subprocess.run(
+            [
+                str(venv_python),
+                str(cfg.odoo_bin),
+                "-c",
+                str(cfg.config_file),
+                "db",
+                "drop",
+                db_name,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return
+    except OSError:
+        pass
+
+    # Fallback to dropdb
+    warning("odoo-bin db drop failed, falling back to dropdb...")
+    from odoo_dev.commands.db import _parse_db_config
+
+    db_config = _parse_db_config(cfg.config_file)
+    env = {**os.environ, "PGPASSWORD": db_config["password"]}
+
+    # Terminate active connections first — dropdb will fail if any remain
+    _terminate_connections(db_name, db_config)
+
+    result = subprocess.run(
+        [
+            "dropdb",
+            "-h", db_config["host"],
+            "-p", db_config["port"],
+            "-U", db_config["user"],
+            "--if-exists",
+            db_name,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        warning(f"Failed to drop test database {db_name}")
+        if result.stderr:
+            warning(result.stderr.strip())
+
+
+def _terminate_connections(db_name: str, db_config: dict[str, str]) -> None:
+    """Terminate all active connections to a database."""
+    env = {**os.environ, "PGPASSWORD": db_config["password"]}
+    subprocess.run(
+        [
+            "psql",
+            "-h", db_config["host"],
+            "-p", db_config["port"],
+            "-U", db_config["user"],
+            "-d", "postgres",
+            "-c",
+            f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{db_name}' AND pid <> pg_backend_pid()",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
 
 def _get_addons_path(config_file) -> str:
     """Extract addons_path from odoo.conf."""
