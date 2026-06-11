@@ -10,6 +10,7 @@ from typing import Annotated
 import typer
 
 from odoo_dev.config import load_config
+from odoo_dev.preflight import require_db
 from odoo_dev.utils.console import error, info, success, warning
 
 
@@ -52,6 +53,8 @@ def run(
         error(f"Odoo not found at {cfg.odoo_bin}")
         error("Run 'odoo-dev setup' first to clone Odoo repositories.")
         raise typer.Exit(1)
+
+    require_db(cfg)
 
     venv_python = cfg.venv_path / "bin" / "python"
 
@@ -114,6 +117,8 @@ def shell(
         error("Run 'odoo-dev setup' first.")
         raise typer.Exit(1)
 
+    require_db(cfg)
+
     venv_python = cfg.venv_path / "bin" / "python"
 
     success(f"Opening Odoo shell with database {db_name}...")
@@ -147,6 +152,8 @@ def update(
         error(f"Virtual environment not found at {cfg.venv_path}")
         error("Run 'odoo-dev setup' first.")
         raise typer.Exit(1)
+
+    require_db(cfg)
 
     venv_python = cfg.venv_path / "bin" / "python"
 
@@ -192,7 +199,8 @@ def test(
         bool, typer.Option("--coverage/--no-coverage", help="Enable coverage reporting")
     ] = True,
     keep_db: Annotated[
-        bool, typer.Option("--keep-db/--no-keep-db", help="Keep test database after tests")
+        bool,
+        typer.Option("--keep-db/--no-keep-db", help="Keep test database after tests"),
     ] = False,
     exclude: Annotated[
         str | None,
@@ -254,6 +262,8 @@ def test(
     if db_name is None:
         db_name = f"test_{int(time.time())}"
 
+    require_db(cfg)
+
     venv_python = cfg.venv_path / "bin" / "python"
 
     # Determine modules to test
@@ -291,7 +301,15 @@ def test(
                 if not clone_dir.exists():
                     branch = os.environ.get("ODOO_VERSION", cfg.odoo_version)
                     result = subprocess.run(
-                        ["git", "clone", "--depth=1", "-b", branch, repo_url, str(clone_dir)],
+                        [
+                            "git",
+                            "clone",
+                            "--depth=1",
+                            "-b",
+                            branch,
+                            repo_url,
+                            str(clone_dir),
+                        ],
                         capture_output=True,
                     )
                     if result.returncode != 0:
@@ -370,7 +388,9 @@ def test(
 
         if coverage:
             # Build coverage source paths
-            coverage_source = ",".join(str(cfg.addons_dir / m) for m in modules.split(","))
+            coverage_source = ",".join(
+                str(cfg.addons_dir / m) for m in modules.split(",")
+            )
 
             test_cmd = [
                 str(venv_python),
@@ -512,9 +532,12 @@ def _drop_database(cfg, db_name: str) -> None:
     result = subprocess.run(
         [
             "dropdb",
-            "-h", db_config["host"],
-            "-p", db_config["port"],
-            "-U", db_config["user"],
+            "-h",
+            db_config["host"],
+            "-p",
+            db_config["port"],
+            "-U",
+            db_config["user"],
             "--if-exists",
             db_name,
         ],
@@ -534,10 +557,14 @@ def _terminate_connections(db_name: str, db_config: dict[str, str]) -> None:
     subprocess.run(
         [
             "psql",
-            "-h", db_config["host"],
-            "-p", db_config["port"],
-            "-U", db_config["user"],
-            "-d", "postgres",
+            "-h",
+            db_config["host"],
+            "-p",
+            db_config["port"],
+            "-U",
+            db_config["user"],
+            "-d",
+            "postgres",
             "-c",
             f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
             f"WHERE datname = '{db_name}' AND pid <> pg_backend_pid()",
@@ -546,6 +573,7 @@ def _terminate_connections(db_name: str, db_config: dict[str, str]) -> None:
         text=True,
         env=env,
     )
+
 
 def _get_addons_path(config_file) -> str:
     """Extract addons_path from odoo.conf."""
