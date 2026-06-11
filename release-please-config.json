@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "package-name": "odoo-dev",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["src/odoo_dev/__init__.py"]
+    }
+  }
+}
