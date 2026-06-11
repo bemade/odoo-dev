@@ -493,11 +493,14 @@ def _install_system_dependencies() -> None:
 
     if system == "Darwin":
         success("Installing dependencies for macOS...")
+        # PostgreSQL is a prerequisite you provide yourself (see the README's
+        # "Database setup" section) — we install only the client library and
+        # build deps, never the server. `libpq` is keg-only but ships psql /
+        # createuser, which is all the client side needs.
         subprocess.run(
             [
                 "brew",
                 "install",
-                "postgresql",
                 "libpq",
                 "openssl",
                 "libxml2",

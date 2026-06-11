@@ -41,25 +41,26 @@ Docker at the end — answer "no" if you only want the local venv workflow.
 ## Database setup (read this before your first `run`/`test`)
 
 The generated `conf/odoo.conf` connects as PostgreSQL user **`odoo`** over the local
-socket. You need a running PostgreSQL server and a matching role. `setup` never creates
-the role, and what it installs differs by OS — on **macOS** it installs the server (but
-does **not** start it); on **Linux** it installs only the PostgreSQL *client* (so you
-supply the server yourself). On a fresh machine do this once:
+socket. **A running PostgreSQL server is a prerequisite you provide yourself** — on
+every platform. `setup` installs only the PostgreSQL *client* and build dependencies
+(macOS: `libpq`; Linux: `postgresql-client` + `libpq-dev`); it never installs, starts,
+or configures a server, and never creates the `odoo` role. So on a fresh machine,
+install a server, start it, and create the role once:
 
 **macOS (Homebrew):**
 
 ```bash
-brew services start postgresql@18          # start the server (use your installed version)
-createuser -s odoo                         # create the role odoo.conf expects
+brew install postgresql@18                  # install a server (pick your version)
+brew services start postgresql@18           # start it
+createuser -s odoo                          # create the role odoo.conf expects
 # Homebrew's versioned postgres is keg-only; add its bin to PATH if psql/createuser aren't found:
 #   export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 ```
 
-**Debian/Ubuntu:** install a server if you don't already have one (or point
-`conf/odoo.conf` at an existing / remote / Docker PostgreSQL):
+**Debian/Ubuntu:**
 
 ```bash
-sudo apt-get install postgresql     # if you don't already have a server
+sudo apt-get install postgresql     # install a server if you don't already have one
 sudo systemctl start postgresql
 sudo -u postgres createuser -s odoo
 ```
