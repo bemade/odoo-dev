@@ -64,7 +64,14 @@ sudo systemctl start postgresql
 sudo -u postgres createuser -s odoo
 ```
 
-You can change the DB user/password in `conf/odoo.conf` if you prefer a different role.
+**Using a different / remote / Docker PostgreSQL:** set `DB_HOST`, `DB_PORT`,
+`DB_USER`, `DB_PASSWORD` in `.env` before running `setup` (it writes them into
+`conf/odoo.conf`), or edit `conf/odoo.conf` directly. With no `DB_HOST`, odoo-dev
+connects over the local socket as the `odoo` role.
+
+Before launching, `run`/`test`/`shell`/`update` run a quick connection preflight: if
+the server is unreachable, the role is missing, or authentication fails, you get a
+specific one-line fix instead of a stack trace.
 
 ## Commands
 
@@ -141,6 +148,14 @@ Create a `.env` file in your project root:
 ```bash
 ODOO_VERSION=19.0
 PYTHON_VERSION=3.12
+
+# Optional — DB connection, written into conf/odoo.conf by `setup`.
+# Omit DB_HOST/DB_PORT to use the local socket (the default). Set these to
+# point at a remote / Docker / non-default PostgreSQL:
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_USER=odoo
+# DB_PASSWORD=odoo
 ```
 
 ## Requirements
