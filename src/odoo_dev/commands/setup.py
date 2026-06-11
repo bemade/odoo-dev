@@ -309,12 +309,28 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
     # Filter to only existing paths
     addons_paths = [p for p in addons_paths if Path(p).exists()]
 
-    config_content = f"""[options]
-addons_path = {",".join(addons_paths)}
-admin_passwd = admin
-db_user = odoo
-db_password = odoo
-"""
+    # DB connection is configurable via .env (loaded into the environment by
+    # load_config). Host/port are written only when set, so the default is the
+    # local socket — matching odoo-bin's behavior when db_host is absent.
+    db_user = os.getenv("DB_USER", "odoo")
+    db_password = os.getenv("DB_PASSWORD", "odoo")
+    db_host = os.getenv("DB_HOST", "")
+    db_port = os.getenv("DB_PORT", "")
+
+    db_lines = []
+    if db_host:
+        db_lines.append(f"db_host = {db_host}")
+    if db_port:
+        db_lines.append(f"db_port = {db_port}")
+    db_lines.append(f"db_user = {db_user}")
+    db_lines.append(f"db_password = {db_password}")
+
+    config_content = (
+        "[options]\n"
+        f"addons_path = {','.join(addons_paths)}\n"
+        "admin_passwd = admin\n"
+        f"{chr(10).join(db_lines)}\n"
+    )
 
     conf_file.write_text(config_content)
     conf_file.chmod(0o600)

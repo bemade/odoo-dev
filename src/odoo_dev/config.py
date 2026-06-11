@@ -10,6 +10,56 @@ DEFAULT_PYTHON_VERSION = "3.12"
 
 
 @dataclass
+class DbConfig:
+    """PostgreSQL connection settings, as odoo-bin will use them.
+
+    An empty ``host``/``port`` means "use the libpq defaults" (i.e. the local
+    Unix socket), which is exactly what odoo-bin does when ``db_host`` is absent
+    from odoo.conf. The preflight check must mirror that, so we keep them empty
+    rather than substituting ``localhost``/``5432`` (which would force TCP and
+    can spuriously fail on socket/peer-auth setups).
+    """
+
+    host: str = ""
+    port: str = ""
+    user: str = "odoo"
+    password: str = ""
+    name: str | None = None
+
+
+def read_db_config(config_file: Path) -> "DbConfig":
+    """Read DB connection settings from an odoo.conf file.
+
+    Args:
+        config_file: Path to odoo.conf. A missing file yields defaults.
+
+    Returns:
+        DbConfig reflecting the connection odoo-bin would make.
+    """
+    db = DbConfig()
+    if not config_file.exists():
+        return db
+
+    for line in config_file.read_text().splitlines():
+        line = line.strip()
+        if "=" not in line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key == "db_host":
+            db.host = value
+        elif key == "db_port":
+            db.port = value
+        elif key == "db_user":
+            db.user = value
+        elif key == "db_password":
+            db.password = value
+        elif key == "db_name":
+            db.name = value
+    return db
+
+
+@dataclass
 class ProjectConfig:
     """Configuration for an Odoo development project."""
 
