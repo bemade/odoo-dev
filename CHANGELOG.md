@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/bemade/odoo-dev/compare/v0.4.0...v1.0.0) (2026-06-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* macOS `setup` no longer installs PostgreSQL. Fresh macOS setups must install a server themselves (or point DB_HOST/DB_PORT at a remote/Docker server).
+
+### Features
+
+* treat PostgreSQL as an external prerequisite on all platforms ([#5](https://github.com/bemade/odoo-dev/issues/5)) ([e817107](https://github.com/bemade/odoo-dev/commit/e817107ac434a5b23dd2675d59a95d1a6f8d1e71))
+
 ## [0.4.0](https://github.com/bemade/odoo-dev/compare/v0.3.3...v0.4.0) (2026-06-11)
 
 
