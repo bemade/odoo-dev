@@ -5,6 +5,7 @@
       "release-type": "python",
       "package-name": "odoo-dev",
       "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
       "extra-files": ["src/odoo_dev/__init__.py"]
     }
   }
