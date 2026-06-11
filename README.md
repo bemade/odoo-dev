@@ -41,9 +41,10 @@ Docker at the end — answer "no" if you only want the local venv workflow.
 ## Database setup (read this before your first `run`/`test`)
 
 The generated `conf/odoo.conf` connects as PostgreSQL user **`odoo`** over the local
-socket. You need a running PostgreSQL server and a matching role. `setup` installs
-PostgreSQL but does **not** start it or create the role, so on a fresh machine do this
-once:
+socket. You need a running PostgreSQL server and a matching role. `setup` never creates
+the role, and what it installs differs by OS — on **macOS** it installs the server (but
+does **not** start it); on **Linux** it installs only the PostgreSQL *client* (so you
+supply the server yourself). On a fresh machine do this once:
 
 **macOS (Homebrew):**
 
@@ -54,9 +55,11 @@ createuser -s odoo                         # create the role odoo.conf expects
 #   export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 ```
 
-**Debian/Ubuntu:**
+**Debian/Ubuntu:** install a server if you don't already have one (or point
+`conf/odoo.conf` at an existing / remote / Docker PostgreSQL):
 
 ```bash
+sudo apt-get install postgresql     # if you don't already have a server
 sudo systemctl start postgresql
 sudo -u postgres createuser -s odoo
 ```
