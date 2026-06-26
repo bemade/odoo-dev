@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/bemade/odoo-dev/compare/v1.0.0...v1.1.0) (2026-06-26)
+
+
+### Features
+
+* add `bump` command for series-agnostic manifest version bumps ([#7](https://github.com/bemade/odoo-dev/issues/7)) ([992c8aa](https://github.com/bemade/odoo-dev/commit/992c8aa3731d262803a6f329209275462d88d80a))
+
 ## [1.0.0](https://github.com/bemade/odoo-dev/compare/v0.4.0...v1.0.0) (2026-06-11)
 
 
