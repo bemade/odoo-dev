@@ -51,6 +51,11 @@ class TestCliHelp:
         result = runner.invoke(app, ["scaffold", "--help"])
         assert result.exit_code == 0
 
+    def test_bump_help(self):
+        result = runner.invoke(app, ["bump", "--help"])
+        assert result.exit_code == 0
+        assert "patch" in result.output
+
     def test_setup_help(self):
         result = runner.invoke(app, ["setup", "--help"])
         assert result.exit_code == 0
