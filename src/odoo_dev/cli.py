@@ -5,6 +5,7 @@ from typing import Optional
 import typer
 
 from odoo_dev import __version__
+from odoo_dev.commands import bump as bump_cmd
 from odoo_dev.commands import db, docker, run, setup
 
 
@@ -51,6 +52,9 @@ app.command()(run.shell)
 app.command()(run.update)
 app.command()(run.test)
 app.command()(run.scaffold)
+
+# Versioning
+app.command()(bump_cmd.bump)
 
 
 def main() -> None:
