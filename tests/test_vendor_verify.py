@@ -109,6 +109,16 @@ def test_verify_green_when_python_dep_declared(tmp_path):
     assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
 
 
+def test_verify_python_dep_specifier_matches_bare_requirement(tmp_path):
+    # Manifest declares a version-specified dep; requirements.txt pins the bare
+    # name — the check must compare package NAMES, not the whole spec string.
+    repo, sha = _source_repo(tmp_path, python_dep="caldav>=1.3.9,<=2.0.1")
+    proj, lock = _project(tmp_path, LockEntry("shared_addon", str(repo), sha))
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    (proj / "requirements.txt").write_text("caldav==1.3.9\n")
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
+
+
 def test_verify_red_on_moved_tag(tmp_path):
     repo, sha = _source_repo(tmp_path, tag="shared_addon/18.0.1.0.0")
     proj, lock = _project(tmp_path, LockEntry("shared_addon", str(repo), sha))

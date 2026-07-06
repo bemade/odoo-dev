@@ -28,6 +28,18 @@ def _normalize(pkg: str) -> str:
     return re.sub(r"[-_.]+", "-", pkg.strip().lower())
 
 
+def _pkg_name(spec: str) -> str:
+    """Bare, normalized distribution name from a requirement spec.
+
+    Strips version specifiers, extras, and env markers, so
+    ``caldav>=1.3.9,<=2.0.1`` and ``icalendar<6.0`` and ``foo[bar]`` all reduce to
+    their package name. Used for BOTH requirements.txt lines and a manifest's
+    ``external_dependencies['python']`` entries (which may carry the same syntax).
+    """
+    token = re.split(r"[<>=!~;\[\s(]", spec.strip(), 1)[0]
+    return _normalize(token)
+
+
 def requirements_names(project_dir: Path) -> set:
     """Normalized package names declared in the repo-root ``requirements.txt``."""
     req = Path(project_dir) / "requirements.txt"
@@ -38,9 +50,9 @@ def requirements_names(project_dir: Path) -> set:
         line = line.split("#", 1)[0].strip()
         if not line or line.startswith("-") or "://" in line:
             continue
-        token = re.split(r"[<>=!~;\[\s]", line, 1)[0]
-        if token:
-            names.add(_normalize(token))
+        name = _pkg_name(line)
+        if name:
+            names.add(name)
     return names
 
 
@@ -111,7 +123,7 @@ def verify(project_dir: Path, lock: Lockfile, cache_dir: Optional[Path] = None) 
                 )
 
         for dep in manifest_python_deps(vendored / name):
-            if _normalize(dep) not in reqs:
+            if _pkg_name(dep) not in reqs:
                 problems.append(
                     f"{name}: external python dep '{dep}' not in requirements.txt "
                     f"(unsatisfiable on Odoo.sh)"
