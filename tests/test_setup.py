@@ -191,6 +191,56 @@ class TestLocalOdooConf:
         assert str(tmp_path / "vendored") in cfg.config_file.read_text()
 
 
+class TestAgenticSetup:
+    """Non-interactive, no-docker setup path for headless/agentic use."""
+
+    def test_prompt_for_versions_non_interactive_uses_defaults(
+        self, tmp_path: Path, monkeypatch
+    ):
+        import os
+
+        from odoo_dev.commands.setup import _prompt_for_versions
+        from odoo_dev.config import DEFAULT_ODOO_VERSION
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ODOO_VERSION", raising=False)
+        monkeypatch.delenv("PYTHON_VERSION", raising=False)
+        with (
+            patch("odoo_dev.commands.setup.typer.prompt") as prompt,
+            patch("odoo_dev.commands.setup.typer.confirm") as confirm,
+        ):
+            _prompt_for_versions(non_interactive=True)
+        # No interactive calls, defaults applied, recorded to .env silently.
+        prompt.assert_not_called()
+        confirm.assert_not_called()
+        assert os.environ["ODOO_VERSION"] == DEFAULT_ODOO_VERSION
+        assert "ODOO_VERSION" in (tmp_path / ".env").read_text()
+
+    def test_setup_no_docker_yes_skips_docker_and_prompts(self, tmp_path: Path):
+        from odoo_dev.commands import setup as setup_mod
+
+        cfg = _make_cfg(tmp_path)
+        with (
+            patch.object(setup_mod, "_prompt_for_versions") as prompt_versions,
+            patch.object(setup_mod, "load_config", return_value=cfg),
+            patch.object(setup_mod, "_init_submodules"),
+            patch.object(setup_mod, "_clone_odoo_repos") as clone,
+            patch.object(setup_mod, "vscode"),
+            patch.object(setup_mod, "setup_venv") as venv,
+            patch.object(setup_mod, "_setup_docker_files") as docker_files,
+            patch("odoo_dev.commands.docker.build") as docker_build,
+            patch.object(setup_mod.typer, "confirm") as confirm,
+        ):
+            setup_mod.setup(no_docker=True, yes=True)
+
+        prompt_versions.assert_called_once_with(non_interactive=True)
+        clone.assert_called_once()  # core still cloned (headless full setup)
+        venv.assert_called_once()
+        confirm.assert_not_called()  # no prompts
+        docker_files.assert_not_called()  # no docker
+        docker_build.assert_not_called()
+
+
 class TestInitSubmodules:
     """Test _init_submodules is called correctly from setup_venv."""
 

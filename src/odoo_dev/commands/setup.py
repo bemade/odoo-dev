@@ -18,11 +18,13 @@ from odoo_dev.config import (
 from odoo_dev.utils.console import info, success, warning
 
 
-def _prompt_for_versions() -> None:
-    """Prompt for ODOO_VERSION and PYTHON_VERSION if not set.
+def _prompt_for_versions(non_interactive: bool = False) -> None:
+    """Resolve ODOO_VERSION and PYTHON_VERSION.
 
-    Checks environment and .env file. If not found, prompts interactively
-    and optionally saves to .env.
+    Checks environment and .env file. If unset and ``non_interactive`` is False,
+    prompts interactively and optionally saves to .env. If ``non_interactive``,
+    falls back to the defaults with no prompts (agentic/headless use) and records
+    them to .env silently.
     """
     project_dir = find_project_root()
     env_file = project_dir / ".env"
@@ -36,24 +38,28 @@ def _prompt_for_versions() -> None:
     updates = {}
 
     if not odoo_version:
-        odoo_version = typer.prompt(
-            "Odoo version",
-            default=DEFAULT_ODOO_VERSION,
+        odoo_version = (
+            DEFAULT_ODOO_VERSION
+            if non_interactive
+            else typer.prompt("Odoo version", default=DEFAULT_ODOO_VERSION)
         )
         os.environ["ODOO_VERSION"] = odoo_version
         updates["ODOO_VERSION"] = odoo_version
 
     if not python_version:
-        python_version = typer.prompt(
-            "Python version",
-            default=DEFAULT_PYTHON_VERSION,
+        python_version = (
+            DEFAULT_PYTHON_VERSION
+            if non_interactive
+            else typer.prompt("Python version", default=DEFAULT_PYTHON_VERSION)
         )
         os.environ["PYTHON_VERSION"] = python_version
         updates["PYTHON_VERSION"] = python_version
 
-    # Offer to save to .env if we prompted for anything
+    # Persist anything we resolved. Non-interactive saves silently; interactive asks.
     if updates:
-        if typer.confirm("Save these settings to .env?", default=True):
+        if non_interactive or typer.confirm(
+            "Save these settings to .env?", default=True
+        ):
             _update_env_file(env_file, updates)
             success(f"Settings saved to {env_file}")
 
@@ -98,10 +104,27 @@ def setup(
         "--clean",
         help="Clean up before setup (remove existing venv, etc.)",
     ),
+    no_docker: bool = typer.Option(
+        False,
+        "--no-docker",
+        help="Skip Docker file setup and image build (local venv only).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Non-interactive: no prompts, use defaults. For agentic/headless use "
+        "(combine with --no-docker for a fully unattended local setup).",
+    ),
 ) -> None:
-    """Complete setup: clone Odoo repos, configure VSCode, build image."""
-    # Prompt for versions if not configured
-    _prompt_for_versions()
+    """Complete setup: clone Odoo repos, configure VSCode, build image.
+
+    For headless/agentic use run ``odoo-dev setup --no-docker --yes``: clones the
+    Odoo repos, builds the local venv and odoo.conf, and never prompts or touches
+    Docker.
+    """
+    # Resolve versions (no prompts under --yes)
+    _prompt_for_versions(non_interactive=yes)
 
     cfg = load_config()
 
@@ -128,9 +151,14 @@ def setup(
     )
     setup_venv()
 
-    # Prompt for Docker setup
-    warning("\nDo you want to set up the Docker environment?")
-    if typer.confirm("Continue with Docker setup?", default=True):
+    # Docker setup — skipped entirely under --no-docker; auto-confirmed under --yes.
+    if no_docker:
+        info(
+            "Skipping Docker setup (--no-docker). Run 'odoo-dev build' later if needed."
+        )
+    elif yes or typer.confirm(
+        "\nDo you want to set up the Docker environment?", default=True
+    ):
         # Set up Docker files first
         _setup_docker_files(cfg, community_only=community)
 
