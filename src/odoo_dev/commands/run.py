@@ -268,7 +268,9 @@ def test(
 
     # Determine modules to test
     if modules is None:
-        # Use manifestoo to list addons in the addons directory
+        # Use manifestoo to list addons across addons/ and vendored/, so a no-args
+        # run tests all custom AND vendored addons together (catches vendored
+        # addons that break when combined with local addons or with each other).
         manifestoo_cmd = [
             str(venv_python),
             "-m",
@@ -276,6 +278,8 @@ def test(
             "--select-addons-dir",
             str(cfg.addons_dir),
         ]
+        if cfg.vendored_dir.is_dir():
+            manifestoo_cmd.extend(["--select-addons-dir", str(cfg.vendored_dir)])
         if exclude:
             manifestoo_cmd.extend(["--select-exclude", exclude])
         manifestoo_cmd.extend(["list", "--separator=,"])
@@ -287,7 +291,7 @@ def test(
         )
         modules = result.stdout.strip()
         if not modules:
-            error(f"No addons found in {cfg.addons_dir}")
+            error(f"No addons found in {cfg.addons_dir} or {cfg.vendored_dir}")
             raise typer.Exit(1)
 
     # Clone external repo dependencies declared in repo_deps.yaml and symlink into addons_dir
@@ -387,9 +391,9 @@ def test(
         success(f"Running tests: {modules}")
 
         if coverage:
-            # Build coverage source paths
+            # Build coverage source paths (a module may live in addons/ or vendored/)
             coverage_source = ",".join(
-                str(cfg.addons_dir / m) for m in modules.split(",")
+                str(_module_dir(cfg, m)) for m in modules.split(",")
             )
 
             test_cmd = [
@@ -573,6 +577,14 @@ def _terminate_connections(db_name: str, db_config: dict[str, str]) -> None:
         text=True,
         env=env,
     )
+
+
+def _module_dir(cfg, module: str) -> Path:
+    """Return the directory of ``module`` — under addons/ or vendored/."""
+    for base in (cfg.addons_dir, cfg.vendored_dir):
+        if (base / module).is_dir():
+            return base / module
+    return cfg.addons_dir / module
 
 
 def _get_addons_path(config_file) -> str:
