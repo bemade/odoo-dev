@@ -157,6 +157,39 @@ class TestSetupDockerFiles:
         _setup_docker_files(cfg)
         assert cfg.docker_config_file.read_text() == "existing config"
 
+    def test_docker_conf_omits_vendored_when_absent(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        _setup_docker_files(cfg)
+        # No vendored/ dir -> path must not be added (else Odoo warns on boot).
+        assert "/opt/project/vendored" not in cfg.docker_config_file.read_text()
+
+    def test_docker_conf_includes_vendored_when_present(self, tmp_path: Path):
+        cfg = _make_cfg(tmp_path)
+        (tmp_path / "vendored").mkdir()
+        _setup_docker_files(cfg)
+        assert "/opt/project/vendored" in cfg.docker_config_file.read_text()
+
+
+class TestLocalOdooConf:
+    """Test the local odoo.conf addons_path includes vendored/ only when present."""
+
+    def test_local_conf_omits_vendored_when_absent(self, tmp_path: Path):
+        from odoo_dev.commands.setup import _setup_odoo_config
+
+        cfg = _make_cfg(tmp_path)
+        (tmp_path / "conf").mkdir()
+        _setup_odoo_config(cfg)
+        assert "vendored" not in cfg.config_file.read_text()
+
+    def test_local_conf_includes_vendored_when_present(self, tmp_path: Path):
+        from odoo_dev.commands.setup import _setup_odoo_config
+
+        cfg = _make_cfg(tmp_path)
+        (tmp_path / "conf").mkdir()
+        (tmp_path / "vendored").mkdir()
+        _setup_odoo_config(cfg)
+        assert str(tmp_path / "vendored") in cfg.config_file.read_text()
+
 
 class TestInitSubmodules:
     """Test _init_submodules is called correctly from setup_venv."""
@@ -169,13 +202,16 @@ class TestInitSubmodules:
         # Create .gitmodules to trigger the submodule check
         (tmp_path / ".gitmodules").write_text("[submodule]\n")
 
-        with patch("odoo_dev.commands.setup.load_config", return_value=cfg), \
-             patch("odoo_dev.commands.setup._init_submodules") as mock_init, \
-             patch("odoo_dev.commands.setup._setup_odoo_config"), \
-             patch("odoo_dev.commands.setup._install_system_dependencies"), \
-             patch("odoo_dev.commands.setup._update_python_path"), \
-             patch("subprocess.run", return_value=type("R", (), {"returncode": 0})()):
+        with (
+            patch("odoo_dev.commands.setup.load_config", return_value=cfg),
+            patch("odoo_dev.commands.setup._init_submodules") as mock_init,
+            patch("odoo_dev.commands.setup._setup_odoo_config"),
+            patch("odoo_dev.commands.setup._install_system_dependencies"),
+            patch("odoo_dev.commands.setup._update_python_path"),
+            patch("subprocess.run", return_value=type("R", (), {"returncode": 0})()),
+        ):
             from odoo_dev.commands.setup import setup_venv
+
             setup_venv()
 
         mock_init.assert_called_once_with(cfg)
@@ -196,7 +232,10 @@ class TestInitSubmodules:
         cfg = _make_cfg(tmp_path)
         (tmp_path / ".gitmodules").write_text("[submodule]\n")
 
-        with patch("subprocess.run", return_value=type("R", (), {"returncode": 0, "stderr": ""})()) as mock_run:
+        with patch(
+            "subprocess.run",
+            return_value=type("R", (), {"returncode": 0, "stderr": ""})(),
+        ) as mock_run:
             _init_submodules(cfg)
 
         mock_run.assert_called_once()

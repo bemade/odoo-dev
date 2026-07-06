@@ -303,6 +303,7 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
         [
             str(cfg.project_dir / "design-themes"),
             str(cfg.project_dir / "addons"),
+            str(cfg.project_dir / "vendored"),
         ]
     )
 
@@ -360,7 +361,9 @@ def _setup_docker_files(cfg, community_only: bool = False) -> None:
     _setup_docker_odoo_config(cfg, community_only=community_only)
 
 
-def _generate_docker_odoo_conf(community_only: bool = False) -> str:
+def _generate_docker_odoo_conf(
+    community_only: bool = False, has_vendored: bool = False
+) -> str:
     """Generate Docker-specific odoo.conf content."""
     # Build addons path for Docker (using /opt/project paths)
     addons_paths = [
@@ -378,6 +381,10 @@ def _generate_docker_odoo_conf(community_only: bool = False) -> str:
             "/opt/project/addons",
         ]
     )
+    # Only add vendored/ when the repo actually has it — an addons_path entry that
+    # doesn't exist makes Odoo warn on every boot.
+    if has_vendored:
+        addons_paths.append("/opt/project/vendored")
 
     return f"""[options]
 addons_path = {",".join(addons_paths)}
@@ -411,7 +418,12 @@ def _setup_docker_odoo_config(cfg, community_only: bool = False) -> None:
         return
 
     success("Creating Docker Odoo configuration file...")
-    conf_file.write_text(_generate_docker_odoo_conf(community_only=community_only))
+    has_vendored = (cfg.project_dir / "vendored").is_dir()
+    conf_file.write_text(
+        _generate_docker_odoo_conf(
+            community_only=community_only, has_vendored=has_vendored
+        )
+    )
     conf_file.chmod(0o600)
     success(f"Docker config file created at {conf_file}")
 
