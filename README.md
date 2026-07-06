@@ -88,7 +88,7 @@ odoo-dev shell mydb                   # Open an Odoo shell
 odoo-dev update base -d mydb          # Update modules
 odoo-dev test my_module               # Run a module's tests (coverage on by default)
 odoo-dev test my_module --test-tags my_module --no-coverage
-odoo-dev test                         # Auto-discover & test all addons in addons/
+odoo-dev test                         # Auto-discover & test all addons in addons/ + vendored/
 odoo-dev scaffold my_module           # Create a new module
 ```
 
@@ -119,11 +119,35 @@ odoo-dev docker psql                  # PostgreSQL shell
 ### Setup Commands
 
 ```bash
-odoo-dev setup                        # Full setup
+odoo-dev setup                        # Full setup (interactive; offers Docker)
 odoo-dev setup --community            # Community edition only
+odoo-dev setup --no-docker --yes      # Headless/agentic: clone + venv + conf, no Docker, no prompts
 odoo-dev setup-venv                   # Just create the venv (no repo clone)
 odoo-dev vscode                       # Configure VSCode debugging
 ```
+
+### Vendored Addons
+
+Shared addons can be **vendored** — materialized as real committed directories
+under `vendored/`, pinned per-addon by `addons.lock` — instead of pulled in as
+`.repos/` git submodules. This makes each promotion a normal, reviewable file
+diff and deploys as plain files (what Odoo.sh needs). `vendored/` and `addons/`
+are both on the addons path.
+
+```bash
+odoo-dev vendor migrate               # Convert .repos submodule+symlink addons -> vendored/
+odoo-dev vendor migrate --dry-run     # Preview the pins without changing anything
+odoo-dev vendor sync                  # Materialize vendored/ from addons.lock
+odoo-dev vendor check                 # CI gate: verify vendored/ byte-matches the pins
+odoo-dev vendor add fsm --source github.com/bemade/bemade-addons --version 18.0.1.3.2
+odoo-dev vendor bump fsm --version 18.0.1.4.0   # Move a pin and re-materialize
+odoo-dev vendor status                # Show vendored pins (+ any remaining symlinks)
+```
+
+`vendor check` verifies, per addon: the vendored files byte-match the pinned
+commit; a `version` tag (if set) still resolves to that commit; every manifest
+`external_dependencies['python']` is named in `requirements.txt`; and no addon
+name collides between `addons/` and `vendored/`.
 
 ## Project Structure
 
@@ -133,6 +157,8 @@ odoo-dev expects this project structure:
 my-odoo-project/
 ├── .env                 # Optional: ODOO_VERSION, PYTHON_VERSION
 ├── addons/              # Your custom addons
+├── vendored/            # Vendored shared addons (real files, pinned by addons.lock)
+├── addons.lock          # Per-addon pins for vendored/ (see `vendor`)
 ├── requirements.txt     # Project-specific Python deps
 ├── odoo/                # Cloned by setup
 ├── enterprise/          # Cloned by setup (unless --community)
@@ -141,6 +167,10 @@ my-odoo-project/
 └── conf/
     └── odoo.conf        # Created by setup
 ```
+
+`vendored/` and `addons.lock` are only present once a project adopts vendoring
+(`odoo-dev vendor migrate`); submodule-based projects use `.repos/` + symlinks
+into `addons/` instead.
 
 ## Configuration
 
