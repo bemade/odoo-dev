@@ -7,6 +7,7 @@ import typer
 from odoo_dev import __version__
 from odoo_dev.commands import bump as bump_cmd
 from odoo_dev.commands import db, docker, run, setup
+from odoo_dev.commands import vendor as vendor_cmd
 
 
 def _version_callback(value: bool) -> None:
@@ -40,6 +41,7 @@ def _main(
 # Command groups
 app.add_typer(db.app, name="db")
 app.add_typer(docker.app, name="docker")
+app.add_typer(vendor_cmd.app, name="vendor")
 
 # Setup commands
 app.command()(setup.setup)

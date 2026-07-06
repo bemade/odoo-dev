@@ -94,6 +94,16 @@ class ProjectConfig:
         """Path to the project's custom addons directory."""
         return self.project_dir / "addons"
 
+    @property
+    def vendored_dir(self) -> Path:
+        """Path to the vendored shared-addons directory (real committed files)."""
+        return self.project_dir / "vendored"
+
+    @property
+    def lockfile_path(self) -> Path:
+        """Path to the per-addon vendoring lockfile."""
+        return self.project_dir / "addons.lock"
+
 
 def find_project_root(start: Path | None = None) -> Path:
     """Walk up directory tree to find git repository root.
