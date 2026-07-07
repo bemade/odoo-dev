@@ -141,8 +141,21 @@ odoo-dev vendor sync                  # Materialize vendored/ from addons.lock
 odoo-dev vendor check                 # CI gate: verify vendored/ byte-matches the pins
 odoo-dev vendor add fsm --source github.com/bemade/bemade-addons --version 18.0.1.3.2
 odoo-dev vendor bump fsm --version 18.0.1.4.0   # Move a pin and re-materialize
-odoo-dev vendor status                # Show vendored pins (+ any remaining symlinks)
+odoo-dev vendor develop fsm           # Edit fsm against a live source clone
+odoo-dev vendor develop fsm --stop    # Leave develop mode (keeps the clone)
+odoo-dev vendor status                # Show vendored pins, symlinks, develop mode
 ```
+
+Because `vendored/<addon>` is a materialized copy (re-`sync` clobbers it), you
+don't edit it in place. `vendor develop <addon>` clones the addon's source repo
+into a git-ignored `.vendor-dev/`, checks out a work branch at the pinned commit,
+and prepends an overlay to your **local** `conf/odoo.conf` addons_path so Odoo
+loads the live tree instead of the vendored copy (first path wins). `vendored/`
+stays byte-for-byte pristine and only the local conf is touched, so nothing
+dev-only can leak into a commit or into CI/prod. Edit in the clone, run/test in
+this project's Odoo, commit + push upstream, then `vendor bump` once the new
+version is tagged. `--branch NAME` names the work branch; `--base REF` bases it on
+something other than the current pin.
 
 `vendor check` verifies, per addon: the vendored files byte-match the pinned
 commit; a `version` tag (if set) still resolves to that commit; every manifest

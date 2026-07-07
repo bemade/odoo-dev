@@ -15,6 +15,12 @@ import typer
 
 from odoo_dev.config import load_config
 from odoo_dev.utils.console import error, info, success
+from odoo_dev.vendor.develop import (
+    DevelopError,
+    develop_state,
+    start_develop,
+    stop_develop,
+)
 from odoo_dev.vendor.edit import EditError, add_addon, bump_addon
 from odoo_dev.vendor.lock import Lockfile
 from odoo_dev.vendor.migrate import migrate_repo, plan_migration
@@ -153,6 +159,46 @@ def migrate_cmd(
                 info(f"  {s}")
 
 
+@app.command("develop")
+def develop_cmd(
+    name: Annotated[
+        str, typer.Argument(help="Vendored addon to edit against its source repo.")
+    ],
+    branch: Annotated[
+        Optional[str],
+        typer.Option("--branch", "-b", help="Work branch (default vendor-dev/<addon>)."),
+    ] = None,
+    base: Annotated[
+        Optional[str],
+        typer.Option("--base", help="Base the branch on this ref (default: the pin)."),
+    ] = None,
+    stop: Annotated[
+        bool,
+        typer.Option("--stop", help="Leave develop mode: drop the overlay, keep clone."),
+    ] = False,
+) -> None:
+    """Edit a vendored addon against a live source clone, overlaid onto the addons path.
+
+    Clones the source into .vendor-dev/, checks out a work branch, and prepends an
+    overlay to the LOCAL odoo.conf so Odoo loads the live tree instead of vendored/.
+    vendored/ stays pristine. Edit, run/test here, commit+push upstream, then bump.
+    """
+    cfg = load_config()
+    try:
+        if stop:
+            stop_develop(cfg.project_dir, name)
+            success(f"stopped developing {name} (clone kept under .vendor-dev/)")
+            return
+        entry = start_develop(cfg.project_dir, name, branch=branch, base=base)
+    except DevelopError as exc:
+        error(str(exc))
+        raise typer.Exit(2)
+    success(f"developing {name} on branch {entry.branch}")
+    info(f"  clone: {entry.repo}")
+    info("  edit there, run/test in this project's Odoo, then commit + push upstream.")
+    info(f"  once the new version is tagged:  odoo-dev vendor bump {name} --version <v>")
+
+
 @app.command("status")
 def status_cmd() -> None:
     """Show vendored addons (with pins) and any remaining addons/ symlinks (hybrid)."""
@@ -179,3 +225,12 @@ def status_cmd() -> None:
         if symlinks:
             info("")
             info(f"addons/ still symlinked (not yet vendored): {', '.join(symlinks)}")
+
+    # Addons currently overlaid from a live source clone (vendor develop).
+    dev = develop_state(cfg.project_dir)
+    if dev:
+        info("")
+        info("develop mode (overlaid from a live source clone; vendored/ shadowed):")
+        for n in sorted(dev):
+            d = dev[n]
+            info(f"  {n}  branch {d.branch}  <- {d.repo}")
