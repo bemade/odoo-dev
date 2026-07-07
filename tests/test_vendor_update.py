@@ -121,3 +121,28 @@ def test_find_updates_skips_bare_commit_pin(tmp_path):
     _cut_version(repo, "18.0.1.1.0", 2)
     # A bare-commit pin (no version, no branch) is deliberately fixed.
     assert find_updates(proj, Lockfile.load(proj / "addons.lock"), cache_dir=tmp_path / "c2") == []
+
+
+def test_find_updates_stays_in_series(tmp_path):
+    repo = _source(tmp_path)
+    proj = tmp_path / "client"
+    proj.mkdir()
+    add_addon(proj, "shared", str(repo), version="18.0.1.0.0", cache_dir=tmp_path / "c")
+    # A newer 18.0 release AND a cross-series 19.0 tag both exist upstream
+    # (as after baselining both branches). Must NOT jump 18.0 -> 19.0.
+    _cut_version(repo, "18.0.1.1.0", 2)
+    _git(repo, "tag", "shared/19.0.0.1.0")
+    updates = find_updates(
+        proj, Lockfile.load(proj / "addons.lock"), cache_dir=tmp_path / "c2"
+    )
+    assert updates == [
+        {"name": "shared", "kind": "version", "current": "18.0.1.0.0", "latest": "18.0.1.1.0"}
+    ]
+
+
+def test_latest_version_series_filter(tmp_path):
+    repo = _source(tmp_path)
+    _cut_version(repo, "18.0.1.1.0", 2)
+    _git(repo, "tag", "shared/19.0.5.0.0")
+    assert latest_version(str(repo), "shared", tmp_path / "c", series="18") == "18.0.1.1.0"
+    assert latest_version(str(repo), "shared", tmp_path / "c", series="19") == "19.0.5.0.0"

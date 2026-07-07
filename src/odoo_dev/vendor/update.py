@@ -24,27 +24,46 @@ def _version_key(v: str) -> tuple:
     return tuple(int(p) if p.isdigit() else 0 for p in v.replace("-", ".").split("."))
 
 
+def _series(v: str) -> str:
+    """The major-series segment of a version — the cross-series guard.
+
+    An Odoo addon carries both ``18.0.*`` and ``19.0.*`` version tags in its source;
+    version-tracking must stay within the pin's own series (``18`` vs ``19``), since
+    moving across Odoo series is a deliberate migration, never an auto-update.
+    """
+    return v.split(".", 1)[0]
+
+
 def list_addon_versions(
-    source: str, addon: str, cache_dir: Optional[Path] = None
+    source: str,
+    addon: str,
+    cache_dir: Optional[Path] = None,
+    series: Optional[str] = None,
 ) -> list[str]:
-    """All ``<addon>/<version>`` tag versions present in ``source``."""
+    """``<addon>/<version>`` tag versions in ``source``, optionally same-series only."""
     repo = _ensure_clone(source, cache_dir)
     r = subprocess.run(
         ["git", "-C", str(repo), "tag", "-l", f"{addon}/*"],
         capture_output=True,
         text=True,
     )
-    return [
+    versions = [
         t.split("/", 1)[1]
         for t in r.stdout.split()
         if t.startswith(f"{addon}/") and "/" in t
     ]
+    if series is not None:
+        versions = [v for v in versions if _series(v) == series]
+    return versions
 
 
 def latest_version(
-    source: str, addon: str, cache_dir: Optional[Path] = None
+    source: str,
+    addon: str,
+    cache_dir: Optional[Path] = None,
+    series: Optional[str] = None,
 ) -> Optional[str]:
-    versions = list_addon_versions(source, addon, cache_dir)
+    versions = list_addon_versions(source, addon, cache_dir, series)
     return max(versions, key=_version_key) if versions else None
 
 
@@ -65,8 +84,8 @@ def find_updates(
     for name, e in lock.entries.items():
         if only is not None and name not in only:
             continue
-        if e.version:  # version-tracked
-            latest = latest_version(e.source, name, cache_dir)
+        if e.version:  # version-tracked (within the pin's own major series)
+            latest = latest_version(e.source, name, cache_dir, series=_series(e.version))
             if latest and _version_key(latest) > _version_key(e.version):
                 updates.append(
                     {
