@@ -282,11 +282,31 @@ def vscode(cfg=None) -> None:
     success("VSCode configuration set up successfully!")
 
 
+def _fully_vendored(project_dir: Path) -> bool:
+    """True if the repo is fully vendored: ``addons.lock`` present and no
+    ``addons/`` symlink still points into ``.repos/``.
+
+    Such a repo needs no submodule checkout — its shared addons are committed real
+    files under ``vendored/``. A hybrid (still carries ``.repos`` symlinks) does
+    need its submodules, so this returns False there.
+    """
+    from odoo_dev.vendor.verify import hybrid_submodule_addons
+
+    project_dir = Path(project_dir)
+    return (project_dir / "addons.lock").exists() and not hybrid_submodule_addons(
+        project_dir
+    )
+
+
 def _init_submodules(cfg) -> None:
     """Initialize and update git submodules if present."""
     gitmodules = cfg.project_dir / ".gitmodules"
 
     if not gitmodules.exists():
+        return
+
+    if _fully_vendored(cfg.project_dir):
+        info("Fully vendored (addons.lock, no .repos symlinks); skipping submodule init.")
         return
 
     success("Initializing git submodules...")

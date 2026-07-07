@@ -334,3 +334,32 @@ class TestVscodeSetup:
         (vscode_dir / "settings.json").write_text("custom settings")
         vscode(cfg)
         assert (vscode_dir / "settings.json").read_text() == "custom settings"
+
+
+class TestFullyVendored:
+    """`_fully_vendored` gates whether setup-venv inits submodules."""
+
+    def _lock(self, proj: Path):
+        (proj / "addons.lock").write_text("shared_addon:\n  source: x\n  commit: abc\n")
+
+    def test_lock_and_no_symlinks_is_fully_vendored(self, tmp_path: Path):
+        from odoo_dev.commands.setup import _fully_vendored
+
+        self._lock(tmp_path)
+        assert _fully_vendored(tmp_path) is True
+
+    def test_lock_with_repos_symlink_is_hybrid_not_vendored(self, tmp_path: Path):
+        from odoo_dev.commands.setup import _fully_vendored
+
+        self._lock(tmp_path)
+        (tmp_path / ".repos" / "bemade-tools" / "legacy").mkdir(parents=True)
+        (tmp_path / "addons").mkdir()
+        (tmp_path / "addons" / "legacy").symlink_to(
+            Path("../.repos/bemade-tools/legacy")
+        )
+        assert _fully_vendored(tmp_path) is False
+
+    def test_no_lock_is_not_vendored(self, tmp_path: Path):
+        from odoo_dev.commands.setup import _fully_vendored
+
+        assert _fully_vendored(tmp_path) is False
