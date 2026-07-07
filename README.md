@@ -141,6 +141,8 @@ odoo-dev vendor sync                  # Materialize vendored/ from addons.lock
 odoo-dev vendor check                 # CI gate: verify vendored/ byte-matches the pins
 odoo-dev vendor add fsm --source github.com/bemade/bemade-addons --version 18.0.1.3.2
 odoo-dev vendor bump fsm --version 18.0.1.4.0   # Move a pin and re-materialize
+odoo-dev vendor update                # Pull newest upstream for all tracked addons
+odoo-dev vendor update fsm --dry-run  # Show what would update, change nothing
 odoo-dev vendor develop fsm           # Edit fsm against a live source clone
 odoo-dev vendor develop fsm --stop    # Leave develop mode (keeps the clone)
 odoo-dev vendor status                # Show vendored pins, symlinks, develop mode
@@ -161,6 +163,13 @@ something other than the current pin.
 commit; a `version` tag (if set) still resolves to that commit; every manifest
 `external_dependencies['python']` is named in `requirements.txt`; and no addon
 name collides between `addons/` and `vendored/`.
+
+`vendor update` is the **pull** side: each client owns its pins. For every addon
+that tracks upstream — a `version` (bump to the newest `<addon>/<version>` tag) or
+a `branch` (bump to its HEAD) — it moves the pin forward and re-materializes.
+Addons pinned to a bare commit are left alone. Run it on a schedule (a client's own
+CI, its own token, opening a `vendor-bump/…` MR) so shared-addon changes propagate
+without any per-source push/fan-out machinery.
 
 ## Project Structure
 

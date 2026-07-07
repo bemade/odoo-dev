@@ -25,6 +25,7 @@ from odoo_dev.vendor.edit import EditError, add_addon, bump_addon
 from odoo_dev.vendor.lock import Lockfile
 from odoo_dev.vendor.migrate import migrate_repo, plan_migration
 from odoo_dev.vendor.sync import sync_addons
+from odoo_dev.vendor.update import apply_update, find_updates
 from odoo_dev.vendor.verify import verify
 
 app = typer.Typer(
@@ -166,6 +167,38 @@ def migrate_cmd(
             info("Submodules now unused (remove with --deinit or by hand):")
             for s in unused:
                 info(f"  {s}")
+
+
+@app.command("update")
+def update_cmd(
+    addon: Annotated[
+        Optional[list[str]],
+        typer.Argument(help="Only update these addons (default: all tracked)."),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show available updates; change nothing.")
+    ] = False,
+) -> None:
+    """Bump tracked vendored addons to their newest upstream (version tag / branch HEAD).
+
+    The pull side of vendoring: a client pulls updates for the addons it pins.
+    Addons pinned to a bare commit (no version/branch) are left alone.
+    """
+    cfg = load_config()
+    lock = Lockfile.load(cfg.lockfile_path)
+    updates = find_updates(cfg.project_dir, lock, names=addon or None)
+    if not updates:
+        info("All tracked vendored addons are up to date.")
+        return
+    for u in updates:
+        info(f"  {u['name']}: {u['current']} -> {u['latest']} ({u['kind']})")
+    if dry_run:
+        info(f"{len(updates)} update(s) available. Re-run without --dry-run to apply.")
+        return
+    for u in updates:
+        apply_update(cfg.project_dir, u)
+        success(f"updated {u['name']} -> {u['latest']}")
+    info(f"{len(updates)} addon(s) updated. Commit addons.lock + vendored/ and open an MR.")
 
 
 @app.command("develop")
