@@ -54,11 +54,20 @@ def sync_cmd(
 
 
 @app.command("check")
-def check_cmd() -> None:
+def check_cmd(
+    no_hybrid: Annotated[
+        bool,
+        typer.Option(
+            "--no-hybrid",
+            help="Also fail if the repo is a hybrid (addons/ still symlinks into "
+            ".repos/). Use in CI for repos that declare themselves fully vendored.",
+        ),
+    ] = False,
+) -> None:
     """Verify vendored/ matches addons.lock exactly (the CI gate). Exit 1 on any problem."""
     cfg = load_config()
     lock = Lockfile.load(cfg.lockfile_path)
-    problems = verify(cfg.project_dir, lock)
+    problems = verify(cfg.project_dir, lock, allow_hybrid=not no_hybrid)
     if problems:
         for p in problems:
             error(p)

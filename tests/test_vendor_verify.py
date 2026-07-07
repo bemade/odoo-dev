@@ -138,3 +138,43 @@ def test_verify_red_on_double_load(tmp_path):
     (proj / "addons" / "shared_addon" / "__manifest__.py").write_text("{}\n")
     problems = verify(proj, lock, cache_dir=tmp_path / "cache")
     assert any("double-load" in p for p in problems)
+
+
+def _sync_clean(tmp_path):
+    """A clean, fully-vendored project (no addons/ symlinks)."""
+    repo, sha = _source_repo(tmp_path, tag="shared_addon/18.0.1.0.0")
+    proj, lock = _project(
+        tmp_path, LockEntry("shared_addon", str(repo), sha, version="18.0.1.0.0")
+    )
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    return proj, lock
+
+
+def test_verify_hybrid_symlink_ignored_by_default_flagged_when_strict(tmp_path):
+    proj, lock = _sync_clean(tmp_path)
+    # A leftover submodule-backed addon still surfaced via an addons/ symlink.
+    (proj / ".repos" / "bemade-tools" / "legacy_addon").mkdir(parents=True)
+    (proj / "addons").mkdir(exist_ok=True)
+    (proj / "addons" / "legacy_addon").symlink_to(
+        Path("../.repos/bemade-tools/legacy_addon")
+    )
+
+    # Lenient by default (partial migration is a valid transient state).
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
+    # Strict: the hybrid is flagged.
+    strict = verify(proj, lock, cache_dir=tmp_path / "cache", allow_hybrid=False)
+    assert any("legacy_addon" in p and "hybrid" in p for p in strict)
+
+
+def test_verify_strict_green_on_fully_vendored_repo(tmp_path):
+    proj, lock = _sync_clean(tmp_path)
+    assert verify(proj, lock, cache_dir=tmp_path / "cache", allow_hybrid=False) == []
+
+
+def test_verify_strict_ignores_non_repos_symlink(tmp_path):
+    proj, lock = _sync_clean(tmp_path)
+    # A symlink that does NOT point into .repos/ is not a hybrid.
+    (proj / "elsewhere").mkdir()
+    (proj / "addons").mkdir(exist_ok=True)
+    (proj / "addons" / "external").symlink_to(Path("../elsewhere"))
+    assert verify(proj, lock, cache_dir=tmp_path / "cache", allow_hybrid=False) == []

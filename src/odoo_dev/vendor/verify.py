@@ -5,13 +5,16 @@ Assertions (any failure => non-empty problem list => CI red):
   2. byte/mode/symlink identity of each vendored addon vs its pinned commit;
   3. moved-tag tripwire (when the entry carries a ``version`` tag);
   4. external python deps of vendored manifests are present in ``requirements.txt``;
-  5. no addon name in both ``addons/`` and ``vendored/`` (double-load).
+  5. no addon name in both ``addons/`` and ``vendored/`` (double-load);
+  6. (``allow_hybrid=False`` only) no ``addons/`` symlink still points into a
+     ``.repos/`` submodule — i.e. the repo is fully vendored, not a hybrid.
 The gate writes nothing.
 """
 
 from __future__ import annotations
 
 import ast
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -75,8 +78,48 @@ def manifest_python_deps(addon_dir: Path) -> list:
     return []
 
 
-def verify(project_dir: Path, lock: Lockfile, cache_dir: Optional[Path] = None) -> list:
-    """Return a list of human-readable problems; empty means the gate is green."""
+def hybrid_submodule_addons(project_dir: Path) -> list:
+    """``addons/`` symlinks that still source an addon from a ``.repos/`` submodule.
+
+    A fully-vendored repo has none. Their presence means the repo is a *hybrid*
+    (some addons vendored, some still submodule-backed) — which is unsafe for the
+    work-plane's "skip submodule land when ``addons.lock`` exists" shortcut, since
+    the still-submodule'd addons would be silently dropped from the land step.
+    """
+    project_dir = Path(project_dir)
+    addons = project_dir / "addons"
+    if not addons.exists():
+        return []
+    repos = (project_dir / ".repos").resolve()
+    hybrids = []
+    for p in sorted(addons.iterdir()):
+        if not p.is_symlink():
+            continue
+        target = Path(os.readlink(p))
+        if ".repos" in target.parts:
+            hybrids.append(p.name)
+            continue
+        try:
+            abs_target = (p.parent / target).resolve()
+            abs_target.relative_to(repos)
+        except (OSError, ValueError):
+            continue
+        hybrids.append(p.name)
+    return hybrids
+
+
+def verify(
+    project_dir: Path,
+    lock: Lockfile,
+    cache_dir: Optional[Path] = None,
+    allow_hybrid: bool = True,
+) -> list:
+    """Return a list of human-readable problems; empty means the gate is green.
+
+    ``allow_hybrid=False`` (the CI gate for a repo that declares itself fully
+    vendored) additionally fails if any ``addons/`` symlink still points into a
+    ``.repos/`` submodule.
+    """
     project_dir = Path(project_dir)
     vendored = project_dir / "vendored"
     addons = project_dir / "addons"
@@ -134,6 +177,13 @@ def verify(project_dir: Path, lock: Lockfile, cache_dir: Optional[Path] = None) 
         for name in sorted(addon_names & vendored_dirs):
             problems.append(
                 f"{name}: present in BOTH addons/ and vendored/ (double-load)"
+            )
+
+    if not allow_hybrid:
+        for name in hybrid_submodule_addons(project_dir):
+            problems.append(
+                f"{name}: addons/{name} still symlinks into .repos/ — hybrid "
+                f"submodule+vendored repo not allowed (finish 'vendor migrate')"
             )
 
     return problems
