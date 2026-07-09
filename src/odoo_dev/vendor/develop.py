@@ -167,6 +167,21 @@ def remove_addons_path(conf_file: Path, path: str) -> None:
     _write_addons_path(conf_file, [p for p in read_addons_path(conf_file) if p != path])
 
 
+def ensure_addons_path(conf_file: Path, path: str) -> bool:
+    """Append ``path`` to the conf's addons_path if it isn't already listed.
+
+    Idempotent; returns True only when it actually added the entry. Used by
+    ``vendor migrate`` to wire ``vendored/`` into a conf that predates vendoring
+    (``setup`` adds it for fresh confs but never overwrites an existing one).
+    """
+    paths = read_addons_path(conf_file)
+    if path in paths:
+        return False
+    paths.append(path)
+    _write_addons_path(conf_file, paths)
+    return True
+
+
 # --- overlay / gitignore / state ------------------------------------------------
 
 

@@ -14,6 +14,7 @@ import pytest
 from odoo_dev.vendor.develop import (
     DevelopError,
     develop_state,
+    ensure_addons_path,
     read_addons_path,
     start_develop,
     stop_develop,
@@ -187,3 +188,39 @@ def test_two_addons_share_overlay(tmp_path):
     stop_develop(proj, "shared_addon", conf_file=conf)
     assert str(dev / "overlay") in read_addons_path(conf)
     assert [p.name for p in (dev / "overlay").iterdir()] == ["other_addon"]
+
+
+# --- ensure_addons_path: wiring vendored/ into a pre-existing conf --------------
+
+
+def test_ensure_addons_path_appends_when_missing(tmp_path: Path):
+    """A conf that predates vendoring gets vendored/ appended (returns True)."""
+    conf = tmp_path / "odoo.conf"
+    conf.write_text("[options]\naddons_path = /p/odoo/addons,/p/addons\n")
+    vendored = str(tmp_path / "vendored")
+
+    assert ensure_addons_path(conf, vendored) is True
+    paths = read_addons_path(conf)
+    assert paths[-1] == vendored
+    assert paths[:2] == ["/p/odoo/addons", "/p/addons"]
+
+
+def test_ensure_addons_path_is_idempotent(tmp_path: Path):
+    """A second call is a no-op (returns False, no duplicate entry)."""
+    conf = tmp_path / "odoo.conf"
+    conf.write_text("[options]\naddons_path = /p/addons\n")
+    vendored = str(tmp_path / "vendored")
+
+    assert ensure_addons_path(conf, vendored) is True
+    assert ensure_addons_path(conf, vendored) is False
+    assert read_addons_path(conf).count(vendored) == 1
+
+
+def test_ensure_addons_path_inserts_line_when_absent(tmp_path: Path):
+    """A conf with no addons_path line gets one created under [options]."""
+    conf = tmp_path / "odoo.conf"
+    conf.write_text("[options]\nadmin_passwd = x\n")
+    vendored = str(tmp_path / "vendored")
+
+    assert ensure_addons_path(conf, vendored) is True
+    assert read_addons_path(conf) == [vendored]

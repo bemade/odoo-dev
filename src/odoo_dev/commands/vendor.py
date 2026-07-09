@@ -18,6 +18,7 @@ from odoo_dev.utils.console import error, info, success
 from odoo_dev.vendor.develop import (
     DevelopError,
     develop_state,
+    ensure_addons_path,
     start_develop,
     stop_develop,
 )
@@ -159,6 +160,14 @@ def migrate_cmd(
 
     lock, unused = migrate_repo(cfg.project_dir, addons=addon or None, deinit=deinit)
     success(f"Migrated {len(lock.entries)} addon(s) to vendored/ (see addons.lock).")
+
+    # Wire vendored/ into the local conf's addons_path. A fresh `setup` adds it,
+    # but `setup` won't overwrite an existing conf, so a repo vendored for the
+    # first time would otherwise leave Odoo unable to find the new addons
+    # ("invalid module names, ignored"). Local conf only — never Docker/CI.
+    if cfg.config_file.exists() and cfg.vendored_dir.is_dir():
+        if ensure_addons_path(cfg.config_file, str(cfg.vendored_dir)):
+            info(f"Added {cfg.vendored_dir} to {cfg.config_file} addons_path.")
     if unused:
         info("")
         if deinit:
