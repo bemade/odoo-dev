@@ -235,17 +235,18 @@ def test(
             break
 
     # Auto-load exclusions from repo_deps.yaml when not explicitly provided
-    if exclude is None and repo_deps_file is not None:
+    no_ci_modules: list[str] = []
+    if repo_deps_file is not None:
         try:
             import yaml
 
             data = yaml.safe_load(repo_deps_file.read_text()) or {}
-            no_ci = data.get("no_ci", [])
-            if no_ci:
-                exclude = ",".join(no_ci)
-                info(f"Excluding (from {repo_deps_file} no_ci): {exclude}")
+            no_ci_modules = list(data.get("no_ci", []) or [])
         except Exception:
-            pass
+            no_ci_modules = []
+    if exclude is None and no_ci_modules:
+        exclude = ",".join(no_ci_modules)
+        info(f"Excluding (from {repo_deps_file} no_ci): {exclude}")
 
     # Verify setup
     if not cfg.venv_path.exists():
@@ -376,6 +377,9 @@ def test(
             "--stop-after-init",
             "--http-port",
             str(http_port),
+            # No need to fork prefork workers for a stop-after-init install.
+            "--workers",
+            "0",
         ],
     )
 
@@ -422,11 +426,36 @@ def test(
                 "--stop-after-init",
                 "--http-port",
                 str(http_port),
+                # HttpCase needs the threaded server (ThreadedServer.httpd);
+                # a prefork/multi-worker conf raises
+                # "'PreforkServer' object has no attribute 'httpd'" in
+                # setUpClass. Force single-process regardless of odoo.conf.
+                "--workers",
+                "0",
+                # A restrictive dbfilter in odoo.conf (e.g. `dbfilter = ^rwi$`)
+                # never matches the ephemeral test DB, so HttpCase requests get
+                # "dbfilter rejects it; logging session out" -> auth='user'
+                # routes 404 and JSON endpoints return non-JSON. Scope the
+                # filter to this run's test DB so the test server serves it.
+                f"--db-filter=^{db_name}$",
             ]
         )
 
-        if test_tags:
-            test_cmd.extend(["--test-tags", test_tags])
+        # Excluding no_ci modules from the tested-module *list* is not enough:
+        # they still install as transitive deps, and Odoo's button_upgrade
+        # cascades 'to upgrade' to downstream dependents of any upgraded target
+        # module (`-u modules`). A no_ci module that depends on a tested module
+        # thus gets re-upgraded and its post_install tests run. Exclude their
+        # tests explicitly via Odoo test-tags. The TagsSelector auto-adds
+        # '+standard' when only '-' filters are present, so this keeps running
+        # every standard test except those belonging to a no_ci module.
+        effective_test_tags = test_tags
+        if effective_test_tags is None and no_ci_modules:
+            effective_test_tags = ",".join(f"-/{m}" for m in no_ci_modules)
+            info(f"Excluding no_ci module tests via --test-tags: {effective_test_tags}")
+
+        if effective_test_tags:
+            test_cmd.extend(["--test-tags", effective_test_tags])
 
         result = subprocess.run(test_cmd)
         test_exit_code = result.returncode
