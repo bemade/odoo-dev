@@ -99,6 +99,39 @@ def test_bump_moves_pin_and_rematerializes(tmp_path):
     assert verify(proj, lock, cache_dir=tmp_path / "c") == []
 
 
+def _untagged_commit(repo: Path) -> str:
+    """A commit that is NOT a version tag (a between-releases pin target)."""
+    (repo / "shared_addon" / "m.py").write_text("v = 3\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "v3-untagged")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_bump_by_commit_clears_stale_version(tmp_path):
+    """A ``--commit`` bump moves the pin off the tagged commit, so it must clear
+    the now-stale ``version`` — otherwise ``vendor check``'s moved-tag tripwire
+    (correctly) fails because ``<name>/<old-version>`` no longer resolves to the
+    new pin. Regression for the bug where ``bump`` left ``version`` untouched.
+    """
+    repo = _source_repo(tmp_path)
+    proj = tmp_path / "client"
+    proj.mkdir()
+    add_addon(
+        proj, "shared_addon", str(repo), version="18.0.1.0.0", cache_dir=tmp_path / "c"
+    )
+    sha = _untagged_commit(repo)
+
+    entry = bump_addon(proj, "shared_addon", commit=sha, cache_dir=tmp_path / "c")
+
+    assert entry.commit == sha
+    assert entry.version is None, "commit bump must clear the stale version tag"
+    assert (proj / "vendored" / "shared_addon" / "m.py").read_text() == "v = 3\n"
+    lock = Lockfile.load(proj / "addons.lock")
+    assert "version" not in (lock.entries["shared_addon"].to_dict())
+    # The moved-tag tripwire must NOT fire (it would if version stayed stale).
+    assert verify(proj, lock, cache_dir=tmp_path / "c") == []
+
+
 def test_bump_unknown_addon_raises(tmp_path):
     proj = tmp_path / "client"
     proj.mkdir()

@@ -76,8 +76,15 @@ def bump_addon(
     entry = lock.entries[name]
     sha = _resolve_pin(name, entry.source, version, commit, entry.branch, cache_dir)
     entry.commit = sha
-    if version is not None:
-        entry.version = version
+    # ``version`` is the tag-intent metadata, and ``vendor check``'s moved-tag
+    # tripwire (verify.py) requires ``<name>/<version>`` to still resolve to
+    # ``commit``. A ``--commit`` / branch-HEAD bump moves the pin off the tagged
+    # commit, so the old ``version`` is now stale and would (correctly) fail the
+    # tripwire. Set it to whatever the bump was keyed on: the new tag for a
+    # ``--version`` bump, or ``None`` for a raw ``--commit`` / branch bump — a
+    # commit pin carries no version metadata (matching how ``migrate`` renders
+    # untagged pins).
+    entry.version = version
     lock.entries[name] = entry
     lock.dump(project_dir / "addons.lock")
     sync_addons(project_dir, lock, cache_dir=cache_dir, names=[name])
