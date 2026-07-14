@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.1](https://github.com/bemade/odoo-dev/compare/v1.2.0...v1.2.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **test:** make full-suite runs work under a dev odoo.conf ([2a1b752](https://github.com/bemade/odoo-dev/commit/2a1b7527d29b3bf8bb776e41ce739b4864543b73))
+* **vendor:** bump clears stale version when pinning to a commit ([19544ba](https://github.com/bemade/odoo-dev/commit/19544bac55a3dded4b912cc9f2ac7226f5d72d61))
+* **vendor:** constrain `vendor update` to the pin's own major series ([5b58e26](https://github.com/bemade/odoo-dev/commit/5b58e2676de6c1b63a678d1dd365efca9e4c8b99))
+* **vendor:** migrate sets version only when the tag resolves to the pin ([ea59b1d](https://github.com/bemade/odoo-dev/commit/ea59b1d62c9844fb831925d9973b4ec179b803e6))
+
 ## [1.2.0](https://github.com/bemade/odoo-dev/compare/v1.1.0...v1.2.0) (2026-07-07)
 
 
