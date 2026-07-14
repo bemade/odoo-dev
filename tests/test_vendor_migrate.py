@@ -92,6 +92,51 @@ def test_plan_leaves_version_none_when_no_tag(tmp_path):
     assert plans[0]["version"] is None
 
 
+def _source_repo_tag_behind_head(tmp_path: Path) -> Path:
+    """Source where the ``<addon>/<version>`` tag sits at an OLDER commit than
+    HEAD, and HEAD's manifest still carries that same version (no bump between).
+    Mirrors the real case: a pin at an intermediate commit that no release tag
+    points at, even though the manifest version string matches a tag.
+    """
+    repo = tmp_path / "sale-workflow"
+    (repo / "shared_addon" / "models").mkdir(parents=True)
+    (repo / "shared_addon" / "__manifest__.py").write_text(
+        "{'name': 'shared', 'version': '18.0.2.0.0'}\n"
+    )
+    (repo / "shared_addon" / "models" / "m.py").write_text("z = 3\n")
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    c1 = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "tag", "shared_addon/18.0.2.0.0", c1)  # tag at the OLDER commit
+    # A later commit with the SAME manifest version — the pin target.
+    (repo / "shared_addon" / "models" / "m.py").write_text("z = 4\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "later, same version")
+    return repo
+
+
+def test_plan_omits_version_when_tag_points_elsewhere(tmp_path):
+    """Regression: a pin that is NOT the tagged commit (same manifest version at
+    several commits) must be commit-only. Checking mere tag EXISTENCE wrote a
+    ``version`` whose tag resolved to a different commit, tripping ``vendor
+    check``'s moved-tag guard. The full migrate+verify must be clean.
+    """
+    source = _source_repo_tag_behind_head(tmp_path)
+    head = _git(source, "rev-parse", "HEAD")
+    client = _client_repo(tmp_path, source)  # submodule pins source HEAD
+    plans = plan_migration(client)
+    assert plans[0]["commit"] == head
+    assert plans[0]["version"] is None  # tag resolves to the older commit, not HEAD
+
+    migrate_repo(client, deinit=False)
+    lock = Lockfile.load(client / "addons.lock")
+    assert lock.entries["shared_addon"].version is None
+    assert verify(client, lock) == []  # no moved-tag failure
+
+
 def test_migrate_materializes_removes_symlink_and_verifies(tmp_path):
     source, sha = _source_repo(tmp_path, tag="shared_addon/18.0.2.0.0")
     client = _client_repo(tmp_path, source)

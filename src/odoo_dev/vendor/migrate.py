@@ -2,7 +2,9 @@
 
 Reads the ``addons/<addon>`` symlinks that point into ``.repos/*`` submodules,
 derives a per-addon pin (submodule remote URL = source, submodule HEAD = commit,
-manifest version -> version when a matching ``<addon>/<version>`` tag exists),
+manifest version -> version ONLY when the ``<addon>/<version>`` tag resolves to
+the pinned commit; a commit that isn't the tagged release (a pin behind or ahead
+of the tag, or any intermediate commit) is left commit-only, no version),
 writes ``addons.lock``, materializes ``vendored/<addon>/`` from the submodule,
 and removes the now-redundant symlink. Client-private real dirs under ``addons/``
 are left untouched; only symlinks into submodules are migrated. Submodule removal
@@ -19,6 +21,7 @@ from typing import Iterable, Optional
 
 from odoo_dev.utils.manifest import manifest_path, read_version
 from odoo_dev.vendor.lock import LockEntry, Lockfile
+from odoo_dev.vendor.sources import tag_resolves_to
 from odoo_dev.vendor.sync import sync_addons
 
 
@@ -61,16 +64,6 @@ def _submodule_head(project_dir: Path, sub_path: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
-
-
-def _tag_exists(repo: Path, tag: str) -> bool:
-    return (
-        subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", f"refs/tags/{tag}"],
-            capture_output=True,
-        ).returncode
-        == 0
-    )
 
 
 def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) -> list:
@@ -118,7 +111,13 @@ def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) ->
         mf = manifest_path(real)
         if mf is not None:
             v = read_version(mf.read_text())
-            if v is not None and _tag_exists(sub_root, f"{name}/{v}"):
+            # Only claim a ``version`` when the tag actually points at the pinned
+            # commit. Checking mere tag EXISTENCE was wrong: the same manifest
+            # version can live at several commits (the tag is cut at one of
+            # them), so a pin at any other commit with that version would carry a
+            # ``version`` whose tag resolves elsewhere — tripping ``vendor
+            # check``'s moved-tag guard. A non-release pin is commit-only.
+            if v is not None and tag_resolves_to(sub_root, f"{name}/{v}", commit):
                 version = v
         plans.append(
             dict(
