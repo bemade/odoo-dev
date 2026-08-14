@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.2](https://github.com/bemade/odoo-dev/compare/v1.2.1...v1.2.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **vendor:** exclude python bytecode from the vendored tree comparison ([eab5a0a](https://github.com/bemade/odoo-dev/commit/eab5a0a0779821432724e2be31dcb416e5a60c6b)), closes [#11](https://github.com/bemade/odoo-dev/issues/11)
+* **vendor:** fail when .gitignore would strip files out of vendored/ ([6880616](https://github.com/bemade/odoo-dev/commit/6880616fb3f8d503171f7a6e0f5f6bfe98b667a8)), closes [#13](https://github.com/bemade/odoo-dev/issues/13)
+* **vendor:** pin from the recorded gitlink, refuse uninitialized submodules ([001f86f](https://github.com/bemade/odoo-dev/commit/001f86ff1ae4b89b89681aa8e9878cf2bd9f1f1c)), closes [#12](https://github.com/bemade/odoo-dev/issues/12)
+* **vendor:** three failure modes found in vendoring + CI cycles ([051715a](https://github.com/bemade/odoo-dev/commit/051715a10a17163ebe79cd2fe05a7bbe42328511))
+
 ## [1.2.1](https://github.com/bemade/odoo-dev/compare/v1.2.0...v1.2.1) (2026-07-14)
 
 
