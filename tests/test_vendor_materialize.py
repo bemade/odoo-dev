@@ -137,6 +137,37 @@ def test_tree_diff_detects_missing_and_extra_files(tmp_path):
     assert any("thing.py" in d for d in diffs)
 
 
+def test_tree_diff_ignores_bytecode_artifacts(tmp_path):
+    """Running the addon compiles it; ``__pycache__`` is not part of the pin.
+
+    The .pyc are gitignored and absent from a fresh CI checkout, so treating them
+    as "extra" made ``vendor check`` fail locally right after ``odoo-dev test``.
+    """
+    repo, sha = _make_source_repo(tmp_path)
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    extract_subtree(repo, sha, "my_addon", a)
+    extract_subtree(repo, sha, "my_addon", b)
+    cache = b / "models" / "__pycache__"
+    cache.mkdir()
+    (cache / "thing.cpython-312.pyc").write_bytes(b"\x00compiled")
+    (b / "models" / "thing.pyo").write_bytes(b"\x00compiled")
+    assert tree_diff(a, b) == []
+
+
+def test_tree_diff_still_detects_real_change_beside_bytecode(tmp_path):
+    """Ignoring bytecode must not mask a genuine drift in the same directory."""
+    repo, sha = _make_source_repo(tmp_path)
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    extract_subtree(repo, sha, "my_addon", a)
+    extract_subtree(repo, sha, "my_addon", b)
+    (b / "models" / "__pycache__").mkdir()
+    (b / "models" / "__pycache__" / "thing.cpython-312.pyc").write_bytes(b"\x00")
+    (b / "models" / "thing.py").write_text("x = 2\n")
+    assert any("thing.py" in d for d in tree_diff(a, b))
+
+
 def test_extract_bad_commit_raises(tmp_path):
     repo, _ = _make_source_repo(tmp_path)
     with pytest.raises(Exception):

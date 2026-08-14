@@ -5,6 +5,11 @@ modes and symlinks survive verbatim — the vendored copy is byte-identical to t
 source subtree. :func:`tree_diff` then compares two trees on content, the
 executable bit, and symlink targets (a plain ``diff -r`` silently ignores the
 latter two and follows symlinks), which is what makes ``vendor check`` trustworthy.
+
+Python bytecode (``__pycache__/``, ``*.pyc``, ``*.pyo``) is excluded from the
+comparison: running or testing a vendored addon locally compiles it in place, and
+those artifacts are gitignored build output that is neither part of the pinned
+source nor present in a fresh CI checkout.
 """
 
 from __future__ import annotations
@@ -60,12 +65,18 @@ def extract_subtree(repo: Path, commit: str, addon: str, dest: Path) -> None:
         )
 
 
+_BYTECODE_DIRS = {"__pycache__"}
+_BYTECODE_SUFFIXES = (".pyc", ".pyo")
+
+
 def _entries(root: Path) -> dict:
     """Map each path relative to ``root`` to a comparable fingerprint.
 
     - symlink -> ("link", target)          (never dereferenced)
     - file    -> ("file", exec_bit, sha1)
     - dir     -> ("dir",)
+
+    Python bytecode is skipped entirely (see the module docstring).
     """
     root = Path(root)
     out: dict = {}
@@ -73,6 +84,8 @@ def _entries(root: Path) -> dict:
         # Do not descend into symlinked directories; record them as links.
         real_dirs = []
         for d in dirnames:
+            if d in _BYTECODE_DIRS:
+                continue
             p = Path(dirpath) / d
             rel = str(p.relative_to(root))
             if p.is_symlink():
@@ -82,6 +95,8 @@ def _entries(root: Path) -> dict:
                 real_dirs.append(d)
         dirnames[:] = real_dirs
         for f in filenames:
+            if f.endswith(_BYTECODE_SUFFIXES):
+                continue
             p = Path(dirpath) / f
             rel = str(p.relative_to(root))
             if p.is_symlink():
