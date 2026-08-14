@@ -96,7 +96,7 @@ wheels = [
 
 [[package]]
 name = "odoo-dev"
-version = "0.3.3"
+version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

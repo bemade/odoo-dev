@@ -161,8 +161,20 @@ something other than the current pin.
 
 `vendor check` verifies, per addon: the vendored files byte-match the pinned
 commit; a `version` tag (if set) still resolves to that commit; every manifest
-`external_dependencies['python']` is named in `requirements.txt`; and no addon
-name collides between `addons/` and `vendored/`.
+`external_dependencies['python']` is named in `requirements.txt`; no addon
+name collides between `addons/` and `vendored/`; and no file under `vendored/` is
+gitignored. Python bytecode (`__pycache__/`, `*.pyc`) is excluded from the byte
+comparison, so running the test suite doesn't turn the check red.
+
+That last assertion catches a trap specific to migration: repo-wide ignore rules
+(`node_modules`, `package.json`, …) are harmless while shared addons live in
+submodules, but they start applying the moment those addons become real files
+under `vendored/` — and `git add` then skips the matching files without a word,
+so the committed tree is incomplete while everything looks fine locally.
+`vendor migrate` appends a `!vendored/**` negation to `.gitignore` when it
+detects the situation. Pins themselves come from the gitlink the branch records,
+not from whatever the submodule happens to be checked out at; migrate refuses to
+run against uninitialized submodules.
 
 `vendor update` is the **pull** side: each client owns its pins. For every addon
 that tracks upstream — a `version` (bump to the newest `<addon>/<version>` tag) or

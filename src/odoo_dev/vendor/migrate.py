@@ -1,7 +1,7 @@
 """``vendor migrate``: convert a submodule+symlink repo to a vendored one.
 
 Reads the ``addons/<addon>`` symlinks that point into ``.repos/*`` submodules,
-derives a per-addon pin (submodule remote URL = source, submodule HEAD = commit,
+derives a per-addon pin (submodule remote URL = source, recorded gitlink = commit,
 manifest version -> version ONLY when the ``<addon>/<version>`` tag resolves to
 the pinned commit; a commit that isn't the tagged release (a pin behind or ahead
 of the tag, or any intermediate commit) is left commit-only, no version),
@@ -23,10 +23,43 @@ from odoo_dev.utils.manifest import manifest_path, read_version
 from odoo_dev.vendor.lock import LockEntry, Lockfile
 from odoo_dev.vendor.sources import tag_resolves_to
 from odoo_dev.vendor.sync import sync_addons
+from odoo_dev.vendor.verify import gitignored_under_vendored
 
 
 class MigrateError(Exception):
     pass
+
+
+_NEGATION = "!vendored/**"
+_NEGATION_BLOCK = (
+    "\n# Vendored addons must match addons.lock byte-for-byte, so no repo-wide\n"
+    "# ignore rule may strip files out of them. Keep last.\n"
+    f"{_NEGATION}\n"
+)
+
+
+def ensure_vendored_not_ignored(project_dir: Path) -> bool:
+    """Append a ``!vendored/**`` negation when ``.gitignore`` would eat vendored files.
+
+    ``migrate`` is the command that creates the hazard — it turns submodule content
+    (governed by the submodule's own ignore rules) into real files under the
+    superproject's — so it is the right place to repair it, in the same shape as
+    ``ensure_addons_path`` fixing up ``conf/odoo.conf``. Idempotent; returns True
+    only when it actually wrote.
+    """
+    project_dir = Path(project_dir)
+    if not gitignored_under_vendored(project_dir):
+        return False
+    gitignore = project_dir / ".gitignore"
+    text = gitignore.read_text() if gitignore.exists() else ""
+    if any(line.strip() == _NEGATION for line in text.splitlines()):
+        # Already negated yet still ignored: a later rule re-excludes the path, or
+        # the negation cannot apply. Leave it — `vendor check` reports the files.
+        return False
+    if text and not text.endswith("\n"):
+        text += "\n"
+    gitignore.write_text(text + _NEGATION_BLOCK)
+    return True
 
 
 def read_gitmodules(project_dir: Path) -> list:
@@ -57,19 +90,82 @@ def read_gitmodules(project_dir: Path) -> list:
     ]
 
 
-def _submodule_head(project_dir: Path, sub_path: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(Path(project_dir) / sub_path), "rev-parse", "HEAD"],
-        check=True,
+def _gitlink_commit(project_dir: Path, sub_path: str) -> str:
+    """The commit the SUPERPROJECT records for ``sub_path`` — the authoritative pin.
+
+    Read from the superproject tree, never from the submodule working copy. An
+    uninitialized submodule is an empty directory, so ``git -C <sub> rev-parse
+    HEAD`` walks up to the enclosing repo, returns the SUPERPROJECT's head and
+    exits 0 — pinning every addon across every source repo to one wrong sha, in a
+    lockfile that ``vendor check`` then happily validates against itself.
+    ``ls-tree`` cannot walk up, and the ``160000`` mode proves it is a gitlink.
+    """
+    res = subprocess.run(
+        ["git", "-C", str(project_dir), "ls-tree", "HEAD", "--", sub_path],
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    )
+    line = res.stdout.strip()
+    if res.returncode != 0 or not line:
+        raise MigrateError(
+            f"{sub_path}: no submodule recorded at this path in HEAD — cannot "
+            f"derive a pin (commit the submodule, or fix .gitmodules)."
+        )
+    mode, _, rest = line.partition(" ")
+    obj_type, _, rest = rest.partition(" ")
+    sha = rest.split("\t", 1)[0].strip()
+    if mode != "160000" or obj_type != "commit":
+        raise MigrateError(
+            f"{sub_path}: recorded in HEAD as a {obj_type}, not a submodule "
+            f"gitlink — cannot derive a pin."
+        )
+    return sha
+
+
+def _submodule_checkout(project_dir: Path, sub_path: str) -> Optional[str]:
+    """The commit the submodule working copy is actually on, or None if absent.
+
+    Only meaningful for an initialized submodule (which owns a ``.git``); the
+    caller uses it to warn when the checkout has drifted off the gitlink.
+    """
+    sub_root = Path(project_dir) / sub_path
+    if not (sub_root / ".git").exists():
+        return None
+    res = subprocess.run(
+        ["git", "-C", str(sub_root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return res.stdout.strip() if res.returncode == 0 else None
+
+
+def uninitialized_submodules(project_dir: Path) -> list:
+    """Submodule paths git reports as not checked out (``-`` prefix)."""
+    res = subprocess.run(
+        ["git", "-C", str(project_dir), "submodule", "status"],
+        capture_output=True,
+        text=True,
+    )
+    paths = []
+    for line in res.stdout.splitlines():
+        if not line.startswith("-"):
+            continue
+        parts = line[1:].split()
+        if len(parts) >= 2:
+            paths.append(parts[1])
+    return paths
 
 
 def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) -> list:
     """Return a list of planned pins without changing anything.
 
-    Each item: dict(name, source, commit, version, symlink, sub_path).
+    Each item: dict(name, source, commit, version, checkout, symlink, sub_path).
+    ``checkout`` is the submodule's actual HEAD, so the caller can warn when it
+    has drifted off the recorded gitlink the pin comes from.
+
+    Raises :class:`MigrateError` if any submodule being migrated is uninitialized:
+    its addon content and manifest are simply not on disk, and its pin cannot be
+    trusted to mean anything.
     """
     project_dir = Path(project_dir)
     addons_dir = project_dir / "addons"
@@ -77,6 +173,8 @@ def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) ->
         return []
     subs = read_gitmodules(project_dir)
     only = set(addons) if addons is not None else None
+    uninit = set(uninitialized_submodules(project_dir))
+    blocked = []
 
     plans = []
     for link in sorted(addons_dir.iterdir()):
@@ -99,6 +197,9 @@ def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) ->
         if sub is None:
             continue  # symlink not into a known submodule; skip
         s_name, s_path, s_url = sub
+        if s_path in uninit:
+            blocked.append((name, s_path))
+            continue
         sub_root = (project_dir / s_path).resolve()
         subpath = real.relative_to(sub_root)
         if str(subpath) != name:
@@ -106,7 +207,7 @@ def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) ->
                 f"{name}: addon sits at '{subpath}' inside submodule {s_path}, not at "
                 f"the root as '{name}'. Nested addons aren't handled yet — migrate by hand."
             )
-        commit = _submodule_head(project_dir, s_path)
+        commit = _gitlink_commit(project_dir, s_path)
         version = None
         mf = manifest_path(real)
         if mf is not None:
@@ -125,9 +226,19 @@ def plan_migration(project_dir: Path, addons: Optional[Iterable[str]] = None) ->
                 source=s_url,
                 commit=commit,
                 version=version,
+                checkout=_submodule_checkout(project_dir, s_path),
                 symlink=link,
                 sub_path=s_path,
             )
+        )
+
+    if blocked:
+        paths = sorted({s_path for _, s_path in blocked})
+        names = ", ".join(sorted(name for name, _ in blocked))
+        raise MigrateError(
+            f"uninitialized submodule(s): {', '.join(paths)} — needed by {names}. "
+            f"Run 'git submodule update --init' first; migrating without them "
+            f"would pin every addon to the superproject's own HEAD."
         )
     return plans
 
