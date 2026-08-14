@@ -6,9 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from odoo_dev.vendor.migrate import migrate_repo, plan_migration, MigrateError
+from odoo_dev.vendor.migrate import (
+    MigrateError,
+    ensure_vendored_not_ignored,
+    migrate_repo,
+    plan_migration,
+)
 from odoo_dev.vendor.lock import Lockfile
-from odoo_dev.vendor.verify import verify
+from odoo_dev.vendor.verify import gitignored_under_vendored, verify
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -171,3 +176,81 @@ def test_migrate_is_idempotent(tmp_path):
     # second run: symlink already gone -> nothing to plan, no error
     lock, unused = migrate_repo(client, cache_dir=tmp_path / "cache")
     assert unused == []
+
+
+# --- pins come from the recorded gitlink, never the submodule working copy -----
+
+
+def test_plan_hard_fails_on_uninitialized_submodule(tmp_path):
+    """Regression: an uninitialized submodule is an EMPTY DIR, so
+    ``git -C <sub> rev-parse HEAD`` walks up to the superproject, returns ITS head
+    and exits 0. Every addon across every source repo got pinned to that one sha,
+    and the lock looked perfectly valid.
+    """
+    source, sha = _source_repo(tmp_path)
+    client = _client_repo(tmp_path, source)
+    _git(client, "submodule", "deinit", "-f", ".repos/sale-workflow")
+    (client / ".repos" / "sale-workflow").mkdir(exist_ok=True)
+    superproject_head = _git(client, "rev-parse", "HEAD")
+
+    with pytest.raises(MigrateError) as exc:
+        plan_migration(client)
+    assert ".repos/sale-workflow" in str(exc.value)
+    assert "submodule update --init" in str(exc.value)
+    # and the sha that WOULD have been written is not the superproject's
+    assert sha != superproject_head
+
+
+def test_plan_pins_recorded_gitlink_not_local_checkout(tmp_path):
+    """A submodule checked out somewhere other than the recorded gitlink (a common
+    state while debugging a shared addon) must not silently redefine the pin: the
+    lock has to describe the branch being migrated.
+    """
+    source, first = _source_repo(tmp_path)
+    client = _client_repo(tmp_path, source)  # gitlink records `first`
+    # move the source forward and check the submodule out there, without
+    # committing the gitlink bump in the superproject
+    (source / "shared_addon" / "models" / "m.py").write_text("z = 99\n")
+    _git(source, "add", "-A")
+    _git(source, "commit", "-qm", "local debugging")
+    later = _git(source, "rev-parse", "HEAD")
+    sub = client / ".repos" / "sale-workflow"
+    _git(sub, "fetch", "-q", "origin")
+    _git(sub, "checkout", "-q", later)
+
+    plans = plan_migration(client)
+    assert plans[0]["commit"] == first  # the gitlink, not the checkout
+    assert plans[0]["checkout"] == later  # surfaced so the CLI can warn
+
+
+# --- migrate repairs the .gitignore it just made dangerous --------------------
+
+
+def _vendored_project(tmp_path: Path, gitignore: str) -> Path:
+    proj = tmp_path / "proj"
+    (proj / "vendored" / "shared_addon" / "static").mkdir(parents=True)
+    (proj / "vendored" / "shared_addon" / "static" / "package.json").write_text("{}\n")
+    _git(proj, "init", "-q")
+    (proj / ".gitignore").write_text(gitignore)
+    return proj
+
+
+def test_ensure_vendored_not_ignored_appends_negation(tmp_path):
+    proj = _vendored_project(tmp_path, "node_modules\npackage.json\n")
+    assert gitignored_under_vendored(proj)  # the trap is armed
+
+    assert ensure_vendored_not_ignored(proj) is True
+    assert "!vendored/**" in (proj / ".gitignore").read_text()
+    assert gitignored_under_vendored(proj) == []  # and disarmed
+
+
+def test_ensure_vendored_not_ignored_is_idempotent(tmp_path):
+    proj = _vendored_project(tmp_path, "node_modules\npackage.json\n")
+    assert ensure_vendored_not_ignored(proj) is True
+    assert ensure_vendored_not_ignored(proj) is False
+
+
+def test_ensure_vendored_not_ignored_leaves_a_clean_repo_alone(tmp_path):
+    proj = _vendored_project(tmp_path, "*.pyc\n")
+    assert ensure_vendored_not_ignored(proj) is False
+    assert "!vendored/**" not in (proj / ".gitignore").read_text()

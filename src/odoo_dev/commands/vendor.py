@@ -14,7 +14,7 @@ from typing import Annotated, Optional
 import typer
 
 from odoo_dev.config import load_config
-from odoo_dev.utils.console import error, info, success
+from odoo_dev.utils.console import error, info, success, warning
 from odoo_dev.vendor.develop import (
     DevelopError,
     develop_state,
@@ -152,8 +152,23 @@ def migrate_cmd(
 ) -> None:
     """Convert addons/ symlinks into .repos submodules to vendored/ + addons.lock."""
     cfg = load_config()
-    if dry_run:
+    try:
         plans = plan_migration(cfg.project_dir, addon or None)
+    except MigrateError as exc:
+        error(str(exc))
+        raise typer.Exit(2)
+
+    # The pin is the gitlink the branch records. Say so when the submodule is
+    # checked out somewhere else, since that checkout is what the dev sees.
+    for p in plans:
+        if p["checkout"] and p["checkout"] != p["commit"]:
+            warning(
+                f"{p['name']}: {p['sub_path']} is checked out at "
+                f"{p['checkout'][:12]} but this branch records "
+                f"{p['commit'][:12]} — pinning the recorded commit."
+            )
+
+    if dry_run:
         if not plans:
             info("Nothing to migrate (no symlinked submodule addons found).")
             return
