@@ -6,7 +6,8 @@ Assertions (any failure => non-empty problem list => CI red):
   3. moved-tag tripwire (when the entry carries a ``version`` tag);
   4. external python deps of vendored manifests are present in ``requirements.txt``;
   5. no addon name in both ``addons/`` and ``vendored/`` (double-load);
-  6. (``allow_hybrid=False`` only) no ``addons/`` symlink still points into a
+  6. no file under ``vendored/`` is gitignored (it would be dropped at commit);
+  7. (``allow_hybrid=False`` only) no ``addons/`` symlink still points into a
      ``.repos/`` submodule — i.e. the repo is fully vendored, not a hybrid.
 The gate writes nothing.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -108,6 +110,45 @@ def hybrid_submodule_addons(project_dir: Path) -> list:
     return hybrids
 
 
+def gitignored_under_vendored(project_dir: Path) -> list:
+    """Paths under ``vendored/`` that git would silently refuse to add.
+
+    Assertions 1-2 compare the pinned subtree against the WORKING TREE, which
+    ``sync``/``migrate`` just materialized in full — so they always match, and are
+    blind to a repo-wide ignore rule (``node_modules``, ``package.json``, …) that
+    is harmless while shared addons live in submodules but starts applying the
+    moment they become real files here. ``git add`` then skips those files without
+    a word and the committed tree is incomplete: green locally, red only once CI
+    checks out a fresh copy, with an error that reads like an upstream problem.
+
+    ``check-ignore`` (not a tracked-vs-on-disk comparison) is the right probe: it
+    reports exactly the paths git would drop, and consults the index, so neither a
+    not-yet-staged ``vendor add`` nor a deliberate ``git add -f`` is a false alarm.
+    """
+    project_dir = Path(project_dir)
+    vendored = project_dir / "vendored"
+    if not vendored.is_dir() or not (project_dir / ".git").exists():
+        return []
+    rels = [
+        str(p.relative_to(project_dir))
+        for p in sorted(vendored.rglob("*"))
+        if p.is_symlink() or p.is_file()
+    ]
+    if not rels:
+        return []
+    res = subprocess.run(
+        ["git", "-C", str(project_dir), "check-ignore", "--stdin"],
+        input="\n".join(rels) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    # 0 = at least one path is ignored, 1 = none are; anything else is an error
+    # (no git, not a work tree) and must not fail the gate on its own.
+    if res.returncode not in (0, 1):
+        return []
+    return [line for line in res.stdout.splitlines() if line.strip()]
+
+
 def verify(
     project_dir: Path,
     lock: Lockfile,
@@ -178,6 +219,13 @@ def verify(
             problems.append(
                 f"{name}: present in BOTH addons/ and vendored/ (double-load)"
             )
+
+    for rel in gitignored_under_vendored(project_dir):
+        problems.append(
+            f"{rel}: under vendored/ but ignored by .gitignore — git will drop it "
+            f"from the commit and the pushed tree will not match addons.lock "
+            f"(add a '!vendored/**' negation, keep it last)"
+        )
 
     if not allow_hybrid:
         for name in hybrid_submodule_addons(project_dir):

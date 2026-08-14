@@ -17,9 +17,17 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _source_repo(
-    tmp_path: Path, *, python_dep: str | None = None, tag: str | None = None
+    tmp_path: Path,
+    *,
+    python_dep: str | None = None,
+    tag: str | None = None,
+    extra: dict | None = None,
 ):
-    """A source repo with addon ``shared_addon``; optional python dep + version tag."""
+    """A source repo with addon ``shared_addon``; optional python dep + version tag.
+
+    ``extra`` maps addon-relative paths to contents, for files whose NAME is what
+    matters (e.g. a bundled ``package.json`` a repo-wide ignore rule would eat).
+    """
     repo = tmp_path / "src"
     (repo / "shared_addon").mkdir(parents=True)
     manifest = {"name": "shared_addon", "version": "18.0.1.0.0"}
@@ -27,6 +35,10 @@ def _source_repo(
         manifest["external_dependencies"] = {"python": [python_dep]}
     (repo / "shared_addon" / "__manifest__.py").write_text(repr(manifest) + "\n")
     (repo / "shared_addon" / "models.py").write_text("y = 2\n")
+    for rel, content in (extra or {}).items():
+        p = repo / "shared_addon" / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
@@ -169,6 +181,59 @@ def test_verify_hybrid_symlink_ignored_by_default_flagged_when_strict(tmp_path):
 def test_verify_strict_green_on_fully_vendored_repo(tmp_path):
     proj, lock = _sync_clean(tmp_path)
     assert verify(proj, lock, cache_dir=tmp_path / "cache", allow_hybrid=False) == []
+
+
+# --- .gitignore silently stripping files out of vendored/ ---------------------
+
+
+def _git_project(tmp_path: Path, entry: LockEntry, gitignore: str) -> tuple:
+    proj, lock = _project(tmp_path, entry)
+    _git(proj, "init", "-q")
+    _git(proj, "config", "user.email", "t@t")
+    _git(proj, "config", "user.name", "t")
+    (proj / ".gitignore").write_text(gitignore)
+    return proj, lock
+
+
+def test_verify_red_when_gitignore_would_drop_vendored_files(tmp_path):
+    """Regression: repo-wide js-tooling ignores are harmless while shared addons
+    live in submodules, but start applying the moment they become real files under
+    vendored/. ``git add`` then skips them silently and the committed tree is
+    incomplete — green locally, red only in CI, with an error that reads like an
+    upstream problem.
+    """
+    repo, sha = _source_repo(
+        tmp_path, extra={"static/src/lib/vendorlib/package.json": "{}\n"}
+    )
+    proj, lock = _git_project(
+        tmp_path,
+        LockEntry("shared_addon", str(repo), sha),
+        "node_modules\npackage.json\n",
+    )
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    problems = verify(proj, lock, cache_dir=tmp_path / "cache")
+    assert any("package.json" in p and ".gitignore" in p for p in problems)
+
+
+def test_verify_green_when_vendored_negation_present(tmp_path):
+    repo, sha = _source_repo(
+        tmp_path, extra={"static/src/lib/vendorlib/package.json": "{}\n"}
+    )
+    proj, lock = _git_project(
+        tmp_path,
+        LockEntry("shared_addon", str(repo), sha),
+        "node_modules\npackage.json\n!vendored/**\n",
+    )
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
+
+
+def test_verify_gitignore_check_is_silent_outside_a_git_repo(tmp_path):
+    """A plain (non-git) project dir must not trip the new assertion."""
+    repo, sha = _source_repo(tmp_path, extra={"package.json": "{}\n"})
+    proj, lock = _project(tmp_path, LockEntry("shared_addon", str(repo), sha))
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
 
 
 def test_verify_strict_ignores_non_repos_symlink(tmp_path):

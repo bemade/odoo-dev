@@ -24,7 +24,12 @@ from odoo_dev.vendor.develop import (
 )
 from odoo_dev.vendor.edit import EditError, add_addon, bump_addon
 from odoo_dev.vendor.lock import Lockfile
-from odoo_dev.vendor.migrate import migrate_repo, plan_migration
+from odoo_dev.vendor.migrate import (
+    MigrateError,
+    ensure_vendored_not_ignored,
+    migrate_repo,
+    plan_migration,
+)
 from odoo_dev.vendor.sync import sync_addons
 from odoo_dev.vendor.update import apply_update, find_updates
 from odoo_dev.vendor.verify import verify
@@ -168,6 +173,15 @@ def migrate_cmd(
     if cfg.config_file.exists() and cfg.vendored_dir.is_dir():
         if ensure_addons_path(cfg.config_file, str(cfg.vendored_dir)):
             info(f"Added {cfg.vendored_dir} to {cfg.config_file} addons_path.")
+
+    # Repo-wide ignore rules that were harmless against submodule content now
+    # apply to real files under vendored/, where git would drop them from the
+    # commit without a word. Negate them at the point of damage.
+    if ensure_vendored_not_ignored(cfg.project_dir):
+        info(
+            "Added a '!vendored/**' negation to .gitignore (rules matched "
+            "vendored files, which git would have silently skipped)."
+        )
     if unused:
         info("")
         if deinit:

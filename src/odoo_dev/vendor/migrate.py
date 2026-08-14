@@ -23,10 +23,43 @@ from odoo_dev.utils.manifest import manifest_path, read_version
 from odoo_dev.vendor.lock import LockEntry, Lockfile
 from odoo_dev.vendor.sources import tag_resolves_to
 from odoo_dev.vendor.sync import sync_addons
+from odoo_dev.vendor.verify import gitignored_under_vendored
 
 
 class MigrateError(Exception):
     pass
+
+
+_NEGATION = "!vendored/**"
+_NEGATION_BLOCK = (
+    "\n# Vendored addons must match addons.lock byte-for-byte, so no repo-wide\n"
+    "# ignore rule may strip files out of them. Keep last.\n"
+    f"{_NEGATION}\n"
+)
+
+
+def ensure_vendored_not_ignored(project_dir: Path) -> bool:
+    """Append a ``!vendored/**`` negation when ``.gitignore`` would eat vendored files.
+
+    ``migrate`` is the command that creates the hazard — it turns submodule content
+    (governed by the submodule's own ignore rules) into real files under the
+    superproject's — so it is the right place to repair it, in the same shape as
+    ``ensure_addons_path`` fixing up ``conf/odoo.conf``. Idempotent; returns True
+    only when it actually wrote.
+    """
+    project_dir = Path(project_dir)
+    if not gitignored_under_vendored(project_dir):
+        return False
+    gitignore = project_dir / ".gitignore"
+    text = gitignore.read_text() if gitignore.exists() else ""
+    if any(line.strip() == _NEGATION for line in text.splitlines()):
+        # Already negated yet still ignored: a later rule re-excludes the path, or
+        # the negation cannot apply. Leave it — `vendor check` reports the files.
+        return False
+    if text and not text.endswith("\n"):
+        text += "\n"
+    gitignore.write_text(text + _NEGATION_BLOCK)
+    return True
 
 
 def read_gitmodules(project_dir: Path) -> list:
