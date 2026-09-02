@@ -7,6 +7,7 @@ import typer
 from odoo_dev import __version__
 from odoo_dev.commands import bump as bump_cmd
 from odoo_dev.commands import db, docker, run, setup
+from odoo_dev.commands import git as git_cmd
 from odoo_dev.commands import vendor as vendor_cmd
 
 
@@ -42,6 +43,7 @@ def _main(
 app.add_typer(db.app, name="db")
 app.add_typer(docker.app, name="docker")
 app.add_typer(vendor_cmd.app, name="vendor")
+app.add_typer(git_cmd.app, name="git")
 
 # Setup commands
 app.command()(setup.setup)
