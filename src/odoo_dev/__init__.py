@@ -1,3 +1,3 @@
 """Odoo Development Environment Helper."""
 
-__version__ = "1.2.3"  # x-release-please-version
+__version__ = "1.3.0"  # x-release-please-version

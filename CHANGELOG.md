@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/bemade/odoo-dev/compare/v1.2.3...v1.3.0) (2026-09-02)
+
+
+### Features
+
+* **git:** add `odoo-dev git` for ref hygiene and honest merge-state answers ([2983595](https://github.com/bemade/odoo-dev/commit/298359576510e4dace6ac0693c8a8f6b31eee8da))
+* **git:** add `odoo-dev git` for ref hygiene and honest merge-state answers ([626f05e](https://github.com/bemade/odoo-dev/commit/626f05ef1a804275fc0a2b2af2696cca5ca2c03a))
+
 ## [1.2.3](https://github.com/bemade/odoo-dev/compare/v1.2.2...v1.2.3) (2026-09-02)
 
 
