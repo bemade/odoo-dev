@@ -277,3 +277,143 @@ def test_unmerged_reads_remote_refs_not_stale_local_ones(repo):
     res = runner.invoke(app, ["git", "unmerged", "main", "--no-fetch"])
     assert res.exit_code == 0
     assert "wip" in res.stdout
+
+
+# --- sweep -------------------------------------------------------------------
+
+
+def _sweep_repo(repo):
+    """Add branches covering each class sweep must distinguish."""
+    # contained: merged into main
+    _run("checkout", "-q", "-b", "done", cwd=repo)
+    (repo / "done.py").write_text("x = 1\n")
+    _run("add", "-A", cwd=repo)
+    _run("commit", "-m", "feat: done", cwd=repo)
+    _run("checkout", "-q", "main", cwd=repo)
+    _run("merge", "--no-ff", "-m", "merge done", "done", cwd=repo)
+    # unknown: real unmerged work, same era as main
+    _run("checkout", "-q", "-b", "live", cwd=repo)
+    (repo / "live.py").write_text("y = 2\n")
+    _run("add", "-A", cwd=repo)
+    _run("commit", "-m", "feat: live", cwd=repo)
+    _run("checkout", "-q", "main", cwd=repo)
+    _run("push", "-q", "origin", "main", "done", "live", cwd=repo)
+    _run("fetch", "-q", "--prune", "origin", cwd=repo)
+
+
+def test_sweep_classifies_contained_and_unknown(repo):
+    _sweep_repo(repo)
+    res = runner.invoke(app, ["git", "sweep", "--no-check-requests", "--no-fetch"])
+    assert res.exit_code == 0, res.stdout
+    assert "CONTAINED" in res.stdout
+    assert "UNKNOWN" in res.stdout
+    assert "DRY RUN" in res.stdout
+
+
+def test_sweep_is_dry_by_default(repo):
+    """Nothing is deleted without --apply, even the provably safe class."""
+    _sweep_repo(repo)
+    res = runner.invoke(
+        app, ["git", "sweep", "--no-check-requests", "--no-fetch", "--non-interactive"]
+    )
+    assert res.exit_code == 0
+    out = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "refs/heads/done" in out
+
+
+def test_sweep_apply_deletes_only_contained(repo):
+    """--non-interactive takes exactly CONTAINED; unmerged work survives."""
+    _sweep_repo(repo)
+    res = runner.invoke(
+        app,
+        [
+            "git",
+            "sweep",
+            "--no-check-requests",
+            "--no-fetch",
+            "--non-interactive",
+            "--apply",
+        ],
+    )
+    assert res.exit_code == 0, res.stdout
+    out = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "refs/heads/done" not in out
+    assert "refs/heads/live" in out
+    assert "refs/heads/main" in out
+
+
+def test_sweep_writes_manifest_with_shas(repo):
+    """The manifest exists before deletion and carries a restorable SHA."""
+    _sweep_repo(repo)
+    sha = subprocess.run(
+        ["git", "rev-parse", "origin/done"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    runner.invoke(
+        app,
+        [
+            "git",
+            "sweep",
+            "--no-check-requests",
+            "--no-fetch",
+            "--non-interactive",
+            "--apply",
+        ],
+    )
+    manifests = list((repo / ".git" / "odoo-dev").glob("sweep-*.tsv"))
+    assert len(manifests) == 1
+    body = manifests[0].read_text()
+    assert sha in body
+    assert "done\t" in body
+    # and that SHA really does bring it back
+    _run("push", "origin", f"{sha}:refs/heads/done", cwd=repo)
+    out = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "refs/heads/done" in out
+
+
+def test_sweep_flags_stale_by_base(repo):
+    """A branch cut before a mass tree change is STALE-BY-BASE, not UNKNOWN.
+
+    This is the class that age cannot detect: the branch below is the newest in
+    the repo and still must never be merged, because it predates files main
+    owns.
+    """
+    for i in range(60):
+        (repo / f"vendored_{i}.py").write_text(f"V = {i}\n")
+    _run("add", "-A", cwd=repo)
+    _run("commit", "-m", "chore: vendor the tree", cwd=repo)
+    _run("push", "-q", "origin", "main", cwd=repo)
+    # branch from BEFORE that commit, then add something new to it
+    _run("checkout", "-q", "-b", "oldbase", "HEAD~1", cwd=repo)
+    (repo / "late.py").write_text("late = True\n")
+    _run("add", "-A", cwd=repo)
+    _run("commit", "-m", "feat: late work on an old base", cwd=repo)
+    _run("push", "-q", "origin", "oldbase", cwd=repo)
+    _run("checkout", "-q", "main", cwd=repo)
+    _run("fetch", "-q", "--prune", "origin", cwd=repo)
+
+    res = runner.invoke(app, ["git", "sweep", "--no-check-requests", "--no-fetch"])
+    assert res.exit_code == 0, res.stdout
+    assert "STALE-BY-BASE" in res.stdout
+    # and it is never auto-selected
+    res2 = runner.invoke(
+        app, ["git", "sweep", "--no-check-requests", "--no-fetch", "--non-interactive"]
+    )
+    assert "oldbase" not in res2.stdout.split("selected:")[-1]

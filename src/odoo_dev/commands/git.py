@@ -19,7 +19,14 @@ is no configured remote left to prune against -- they simply persist, and show
 up in every ref listing as branches that do not exist.
 """
 
+import json
+import os
+import re
+import shutil
 import subprocess
+import sys
+import time
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 import typer
@@ -343,3 +350,347 @@ def shipped(
             info(f"  git diff {ref} {target} -- {p}")
     else:
         success("\nEvery path matches -- this work is present in the target.")
+
+
+# --- sweep -------------------------------------------------------------------
+#
+# The classification ladder below is the one that survived a real cleanup of two
+# long-lived client repos (89 and 41 branches). Its shape is dictated by what
+# each test can actually prove:
+#
+#   KEEP          long-lived lines. Never a candidate, whatever their age.
+#   IN-FLIGHT     an open MR/PR names it as source. Deleting one of these closes
+#                 the request out from under its author.
+#   CONTAINED     `merge-base --is-ancestor` says every commit is reachable from
+#                 a branch we keep. This is the ONLY class that proves deletion
+#                 loses nothing, and so the only one pre-checked.
+#   STALE-BY-BASE not contained, and its diff against the target mass-deletes
+#                 paths the target owns -- the fingerprint of a branch cut before
+#                 a structural change (e.g. submodules -> vendored files). These
+#                 look mergeable and are not: an MR would propose deleting the
+#                 target's tree. Never auto-select.
+#   UNKNOWN       everything else. Genuinely needs a human.
+#
+# Deliberately absent: proving supersession by content across a base gap. The
+# obvious implementation -- diff the paths the old branch touched against its
+# replacement -- reads as "identical" for branches whose fork point predates a
+# tree reorganisation, because the derived path set is dominated by the
+# reorganisation rather than the branch's own work. `odoo-dev git shipped`
+# answers that question properly, per branch, with markers. A branch superseded
+# by an open MR becomes CONTAINED for free once that MR merges, so the honest
+# move is to wait rather than guess.
+
+_KEEP_RE = re.compile(r"^(\d+\.\d+(-(prod|staging))?|main|master)$")
+
+
+def _default_targets(remote: str) -> list[str]:
+    """Long-lived lines, by name. Version branches plus main/master."""
+    out = []
+    for line in _git(
+        "for-each-ref", "--format=%(refname:short)", f"refs/remotes/{remote}"
+    ).splitlines():
+        short = line[len(remote) + 1 :]
+        if short and short != "HEAD" and _KEEP_RE.match(short):
+            out.append(short)
+    return sorted(out)
+
+
+def _open_request_sources(remote: str) -> tuple[set[str], Optional[str]]:
+    """Source branches of open MRs/PRs. Returns (branches, warning_or_None).
+
+    JSON endpoints only. Scraping the human-readable `glab mr list` table looks
+    easier and is a trap: its header line ("... (Page 1)") satisfies a naive
+    "text in parentheses" match and yields a phantom branch named `Page 1`.
+    """
+    url = _git("remote", "get-url", remote, check=False)
+    if not url:
+        return set(), f"no URL for remote {remote!r} -- skipping request lookup"
+
+    if "github" in url:
+        tool, args = "gh", [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "headRefName",
+        ]
+    else:
+        tool, args = "glab", [
+            "api",
+            "projects/:id/merge_requests?state=opened&per_page=100",
+        ]
+
+    if not shutil.which(tool):
+        return set(), (
+            f"{tool} not installed -- cannot see open requests. Branches with an "
+            f"open MR/PR will appear as UNKNOWN, not as safe to delete."
+        )
+
+    r = subprocess.run([tool, *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        return set(), (
+            f"{tool} failed ({(r.stderr or r.stdout).strip().splitlines()[:1]}) -- "
+            f"treating all branches as having no open request."
+        )
+    try:
+        payload = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        return set(), f"could not parse {tool} output as JSON"
+
+    key = "headRefName" if tool == "gh" else "source_branch"
+    return {item[key] for item in payload if item.get(key)}, None
+
+
+def _missing_share(target: str, ref: str) -> tuple[int, float]:
+    """(count, share) of TARGET's paths that REF does not have.
+
+    The SHARE is what distinguishes the two cases, and using the raw count
+    instead is a false-positive generator:
+
+      * a branch merely BEHIND a fast-moving target legitimately lacks whatever
+        was added since -- dozens of files, but a tiny fraction of the tree;
+      * a branch cut before a structural change (submodules -> vendored files,
+        a big reorganisation) lacks most of the tree.
+
+    Only the second is dangerous to merge, and only a ratio separates them.
+    """
+    out = _git("diff", "--name-status", target, ref, check=False)
+    missing = sum(1 for ln in out.splitlines() if ln.startswith("D\t"))
+    total = len(_git("ls-tree", "-r", "--name-only", target, check=False).splitlines())
+    return missing, (missing / total if total else 0.0)
+
+
+@app.command()
+def sweep(
+    targets: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--target",
+            "-t",
+            help="Branch that counts as 'kept'. Repeatable. "
+            "Default: version branches (19.0, 19.0-prod, 19.0-staging...) plus main/master.",
+        ),
+    ] = None,
+    remote: Annotated[str, typer.Option("--remote", help="Remote name")] = "origin",
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Actually delete. Default is a dry run.")
+    ] = False,
+    no_fetch: Annotated[
+        bool, typer.Option("--no-fetch", help="Skip the fetch --prune first")
+    ] = False,
+    check_requests: Annotated[
+        bool,
+        typer.Option(
+            "--check-requests/--no-check-requests",
+            help="Ask glab/gh which branches have an open MR/PR.",
+        ),
+    ] = True,
+    stale_ratio: Annotated[
+        float,
+        typer.Option(
+            "--stale-ratio",
+            help="Share of the target's tree a branch must be missing to count "
+            "as STALE-BY-BASE. A branch that is merely behind lacks a few "
+            "files; one cut before a tree change lacks most of them.",
+        ),
+    ] = 0.25,
+    non_interactive: Annotated[
+        bool,
+        typer.Option(
+            "--non-interactive",
+            help="Skip the picker and take exactly the CONTAINED set.",
+        ),
+    ] = False,
+) -> None:
+    """Classify remote branches and delete the ones you select. DRY RUN unless --apply.
+
+    Writes a manifest of every branch with its SHA *before* deleting anything,
+    so a branch removed here is restorable with::
+
+        git push <remote> <sha>:refs/heads/<branch>
+
+    That matters for anything outside CONTAINED: once such a branch is gone its
+    commits are unreachable, and the SHA in the manifest is the only way back.
+    """
+    if not no_fetch:
+        info(f"fetching {remote} --prune ...")
+        _git("fetch", "--prune", "--quiet", remote)
+
+    keep = list(targets) if targets else _default_targets(remote)
+    if not keep:
+        error(
+            "no target branches found -- pass --target explicitly. Refusing to "
+            "classify anything as deletable with nothing to measure against."
+        )
+        raise typer.Exit(2)
+    info(f"targets: {', '.join(keep)}")
+
+    for t in keep:
+        if not _ok("rev-parse", "--verify", f"{remote}/{t}"):
+            error(f"{remote}/{t} does not exist")
+            raise typer.Exit(2)
+
+    in_flight: set[str] = set()
+    if check_requests:
+        in_flight, warn = _open_request_sources(remote)
+        if warn:
+            warning(f"  {warn}")
+        else:
+            info(f"  {len(in_flight)} branch(es) have an open MR/PR")
+
+    rows: list[dict] = []
+    for line in _git(
+        "for-each-ref",
+        "--format=%(refname:short)%09%(objectname)%09%(committerdate:short)",
+        f"refs/remotes/{remote}",
+    ).splitlines():
+        ref, sha, date = (line.split("\t") + ["", ""])[:3]
+        short = ref[len(remote) + 1 :]
+        if not short or short == "HEAD":
+            continue
+        if short in keep:
+            cls, why = "KEEP", "long-lived line"
+        elif short in in_flight:
+            cls, why = "IN-FLIGHT", "open MR/PR names it as source"
+        else:
+            holder = next(
+                (
+                    t
+                    for t in keep
+                    if _ok("merge-base", "--is-ancestor", ref, f"{remote}/{t}")
+                ),
+                None,
+            )
+            if holder:
+                cls, why = "CONTAINED", f"contained in {remote}/{holder}"
+            else:
+                worst_n, worst_share, worst_t = 0, 0.0, ""
+                for t in keep:
+                    n, share = _missing_share(f"{remote}/{t}", ref)
+                    if share > worst_share:
+                        worst_n, worst_share, worst_t = n, share, t
+                if worst_share >= stale_ratio:
+                    cls = "STALE-BY-BASE"
+                    why = (
+                        f"lacks {worst_n} paths ({worst_share:.0%}) of {worst_t} "
+                        f"-- cut before a tree change"
+                    )
+                else:
+                    cls, why = "UNKNOWN", "not contained; needs a human"
+        rows.append({"branch": short, "sha": sha, "date": date, "cls": cls, "why": why})
+
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["cls"]] = counts.get(r["cls"], 0) + 1
+    info("")
+    for cls in ("KEEP", "IN-FLIGHT", "CONTAINED", "STALE-BY-BASE", "UNKNOWN"):
+        if counts.get(cls):
+            info(f"  {cls:<14} {counts[cls]}")
+
+    candidates = [r for r in rows if r["cls"] not in ("KEEP", "IN-FLIGHT")]
+    if not candidates:
+        success("\nnothing to sweep -- every branch is a keeper or in flight")
+        return
+
+    man = _write_manifest(rows, remote)
+    success(f"\nmanifest: {man}")
+
+    contained = [r for r in candidates if r["cls"] == "CONTAINED"]
+    if non_interactive or not sys.stdin.isatty():
+        chosen = [r["branch"] for r in contained]
+        info(f"non-interactive: taking the {len(chosen)} CONTAINED branch(es) only")
+    else:
+        chosen = _pick(candidates, apply=apply)
+
+    if not chosen:
+        info("nothing selected -- done")
+        return
+
+    warning(f"\n{len(chosen)} branch(es) selected:")
+    for b in chosen:
+        r = next(x for x in rows if x["branch"] == b)
+        info(f"  {r['cls']:<14} {b}")
+
+    if not apply:
+        info("\nDRY RUN -- nothing deleted. Re-run with --apply.")
+        return
+
+    # Re-verify containment immediately before deleting: the survey and the
+    # delete are separated by however long the picker was open, and another
+    # session pushing in that window is not hypothetical.
+    for b in chosen:
+        r = next(x for x in rows if x["branch"] == b)
+        if r["cls"] == "CONTAINED":
+            holder = r["why"].rsplit("/", 1)[-1]
+            if not _ok(
+                "merge-base", "--is-ancestor", f"{remote}/{b}", f"{remote}/{holder}"
+            ):
+                error(
+                    f"{b} is no longer contained in {holder} -- aborting, nothing deleted"
+                )
+                raise typer.Exit(1)
+
+    failed = []
+    for b in chosen:
+        for attempt in (1, 2, 3):
+            r = subprocess.run(
+                ["git", "push", remote, "--delete", b], capture_output=True, text=True
+            )
+            if r.returncode == 0:
+                success(f"  deleted {b}")
+                break
+            if attempt < 3:
+                time.sleep(attempt)
+        else:
+            error(f"  FAILED {b}: {(r.stderr or r.stdout).strip().splitlines()[-1:]}")
+            failed.append(b)
+
+    if failed:
+        error(f"\n{len(failed)} deletion(s) failed -- rerun to retry them")
+        raise typer.Exit(1)
+    success(f"\n{len(chosen)} branch(es) deleted. Restore any of them with:")
+    info(f"  git push {remote} <sha>:refs/heads/<branch>   # SHAs in {man}")
+
+
+def _write_manifest(rows: list[dict], remote: str) -> str:
+    """Record every branch and SHA under .git/ before anything is deleted."""
+    d = os.path.join(_git("rev-parse", "--git-dir"), "odoo-dev")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"sweep-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.tsv")
+    with open(path, "w") as fh:
+        fh.write(
+            f"# odoo-dev git sweep -- {datetime.now(timezone.utc):%Y-%m-%d %H:%M:%SZ}\n"
+        )
+        fh.write(f"# restore with: git push {remote} <sha>:refs/heads/<branch>\n")
+        fh.write("branch\tsha\tlast_commit\tclass\tevidence\n")
+        for r in rows:
+            fh.write(
+                f"{r['branch']}\t{r['sha']}\t{r['date']}\t{r['cls']}\t{r['why']}\n"
+            )
+    return path
+
+
+def _pick(candidates: list[dict], apply: bool = False) -> list[str]:
+    """Checkbox picker. CONTAINED pre-checked; nothing else is."""
+    import questionary
+
+    order = {"CONTAINED": 0, "STALE-BY-BASE": 1, "UNKNOWN": 2}
+    ordered = sorted(candidates, key=lambda r: (order.get(r["cls"], 9), r["date"]))
+    choices = [
+        questionary.Choice(
+            title=f"{r['cls']:<14} {r['date']}  {r['branch']:<48} {r['why']}",
+            value=r["branch"],
+            checked=r["cls"] == "CONTAINED",
+        )
+        for r in ordered
+    ]
+    prompt = (
+        "Select branches to DELETE (space toggles, enter confirms):"
+        if apply
+        else "Select branches (DRY RUN -- the selection is only reported):"
+    )
+    picked = questionary.checkbox(prompt, choices=choices).ask()
+    return picked or []
