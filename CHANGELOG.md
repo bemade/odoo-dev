@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/bemade/odoo-dev/compare/v1.3.0...v1.4.0) (2026-09-04)
+
+
+### Features
+
+* **git:** add `sweep` — classify remote branches, pick, delete ([86fc297](https://github.com/bemade/odoo-dev/commit/86fc29774916f35b6c7470daf9188e2c4bf78907))
+* **git:** add `sweep` — classify remote branches, pick, delete ([69fb870](https://github.com/bemade/odoo-dev/commit/69fb8708c940aa1534e1c342ee138966df584e0f))
+
 ## [1.3.0](https://github.com/bemade/odoo-dev/compare/v1.2.3...v1.3.0) (2026-09-02)
 
 
