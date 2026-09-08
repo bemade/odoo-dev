@@ -59,6 +59,28 @@ def read_db_config(config_file: Path) -> "DbConfig":
     return db
 
 
+# Odoo's own fallback when ``data_dir`` is absent from odoo.conf.
+DEFAULT_ODOO_DATA_DIR = Path.home() / ".local" / "share" / "Odoo"
+
+
+def read_data_dir(config_file: Path) -> Path:
+    """Read ``data_dir`` from an odoo.conf file.
+
+    Args:
+        config_file: Path to odoo.conf.
+
+    Returns:
+        The configured data directory, or Odoo's default when the file is
+        missing or does not set one.
+    """
+    if config_file.exists():
+        for line in config_file.read_text().splitlines():
+            key, sep, value = line.strip().partition("=")
+            if sep and key.strip() == "data_dir":
+                return Path(value.strip()).expanduser()
+    return DEFAULT_ODOO_DATA_DIR
+
+
 @dataclass
 class ProjectConfig:
     """Configuration for an Odoo development project."""
@@ -73,6 +95,18 @@ class ProjectConfig:
     def venv_path(self) -> Path:
         """Path to the Python virtual environment."""
         return self.project_dir / ".venv"
+
+    @property
+    def data_dir(self) -> Path:
+        """Path to the project-local Odoo data directory.
+
+        Odoo defaults to a single shared ``~/.local/share/Odoo`` for every
+        project on the machine, which mixes filestores, sessions and the addons
+        cache across unrelated checkouts and leaves orphaned filestores behind
+        whenever a database is dropped without odoo-bin. Keeping it in-project
+        scopes all of that to the checkout it belongs to.
+        """
+        return self.project_dir / ".odoo-data"
 
     @property
     def config_file(self) -> Path:

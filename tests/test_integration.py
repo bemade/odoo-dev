@@ -90,11 +90,20 @@ def cleanup_fixture_env():
         "conf",
         ".vscode",
         ".odoo-deploy",
+        ".odoo-data",
     ]
     for dirname in created_dirs:
         dir_path = FIXTURE_DIR / dirname
         if dir_path.exists():
             shutil.rmtree(dir_path, ignore_errors=True)
+
+    # setup adds .odoo-data/ to the project's .gitignore; the fixture is a
+    # tracked submodule, so restore it rather than leaving the tree dirty.
+    subprocess.run(
+        ["git", "checkout", "--", ".gitignore"],
+        cwd=FIXTURE_DIR,
+        capture_output=True,
+    )
 
 
 @pytest.fixture(scope="session")
