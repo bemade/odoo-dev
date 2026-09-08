@@ -1,5 +1,6 @@
 """Setup commands for initializing Odoo development environment."""
 
+import ast
 import importlib.resources
 import os
 import shutil
@@ -248,8 +249,83 @@ def setup_venv() -> None:
         [*venv_pip, "pytest", "pytest-odoo", "debugpy", "manifestoo", "coverage"]
     )
 
+    # Install the external Python dependencies our addons declare
+    _install_manifest_python_deps(cfg, venv_pip)
+
     success("\nVirtual environment setup complete!")
     success(f"To activate: source {cfg.venv_path}/bin/activate")
+
+
+def _manifest_test_deps(addons_dir: Path) -> set[str]:
+    """Collect ``test_external_dependencies`` python packages from manifests.
+
+    This is an OCA convention rather than an Odoo core manifest key, so
+    manifestoo does not report it -- but the packages are needed to *run* the
+    tests of addons that declare it (e.g. pdfminer.six). Manifests that are not
+    plain literals are skipped rather than failing setup.
+    """
+    deps: set[str] = set()
+    if not addons_dir.is_dir():
+        return deps
+    for manifest_path in sorted(addons_dir.glob("*/__manifest__.py")):
+        try:
+            manifest = ast.literal_eval(manifest_path.read_text())
+        except (SyntaxError, ValueError):
+            warning(f"Could not parse {manifest_path}, skipping its test deps")
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        test_deps = manifest.get("test_external_dependencies") or {}
+        deps.update(test_deps.get("python") or [])
+    return deps
+
+
+def _manifest_runtime_deps(addons_dir: Path, venv_python: Path) -> set[str]:
+    """Collect ``external_dependencies`` python packages via manifestoo."""
+    if not addons_dir.is_dir():
+        return set()
+    result = subprocess.run(
+        [
+            str(venv_python),
+            "-m",
+            "manifestoo",
+            "--select-addons-dir",
+            str(addons_dir),
+            "list-external-dependencies",
+            "python",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        warning(f"manifestoo failed for {addons_dir}: {result.stderr.strip()}")
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _install_manifest_python_deps(cfg, venv_pip: list[str]) -> None:
+    """Install the Python packages our addons declare in their manifests.
+
+    Covers both ``addons/`` (client-specific) and ``vendored/`` (shared), and
+    both runtime and test dependencies. Without this, a module whose tests need
+    an external package installs fine and then fails at test time.
+    """
+    venv_python = cfg.venv_path / "bin" / "python"
+    deps: set[str] = set()
+    for addons_dir in (cfg.addons_dir, cfg.vendored_dir):
+        deps |= _manifest_runtime_deps(addons_dir, venv_python)
+        deps |= _manifest_test_deps(addons_dir)
+
+    if not deps:
+        return
+
+    success(f"Installing addon manifest dependencies: {', '.join(sorted(deps))}")
+    result = subprocess.run([*venv_pip, *sorted(deps)])
+    if result.returncode != 0:
+        warning(
+            "Some addon dependencies failed to install; tests that need them "
+            "will fail until they are installed manually."
+        )
 
 
 def vscode(cfg=None) -> None:
@@ -334,6 +410,7 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
 
     if conf_file.exists():
         warning(f"Config file already exists at {conf_file}")
+        _ensure_data_dir_configured(cfg, conf_file)
         return
 
     success("Creating Odoo configuration file...")
@@ -366,6 +443,8 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
     db_host = os.getenv("DB_HOST", "")
     db_port = os.getenv("DB_PORT", "")
 
+    admin_passwd = os.getenv("ADMIN_PASSWD", "admin")
+
     db_lines = []
     if db_host:
         db_lines.append(f"db_host = {db_host}")
@@ -377,13 +456,53 @@ def _setup_odoo_config(cfg, community_only: bool = False) -> None:
     config_content = (
         "[options]\n"
         f"addons_path = {','.join(addons_paths)}\n"
-        "admin_passwd = admin\n"
+        f"data_dir = {cfg.data_dir}\n"
+        f"admin_passwd = {admin_passwd}\n"
         f"{chr(10).join(db_lines)}\n"
     )
 
     conf_file.write_text(config_content)
     conf_file.chmod(0o600)
+    _gitignore_data_dir(cfg)
     success(f"Config file created at {conf_file}")
+
+
+def _ensure_data_dir_configured(cfg, conf_file: Path) -> None:
+    """Add ``data_dir`` to an odoo.conf that predates it.
+
+    Existing projects already have a conf file, so the generator's early return
+    would otherwise leave them on the shared ``~/.local/share/Odoo``. Only a
+    missing key is filled in — an explicit data_dir is left alone.
+    """
+    content = conf_file.read_text()
+    if any(
+        line.strip().partition("=")[0].strip() == "data_dir"
+        for line in content.splitlines()
+    ):
+        return
+
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "[options]":
+            lines.insert(i + 1, f"data_dir = {cfg.data_dir}")
+            break
+    else:
+        lines.append(f"data_dir = {cfg.data_dir}")
+    conf_file.write_text("\n".join(lines) + "\n")
+    _gitignore_data_dir(cfg)
+    success(f"Added data_dir = {cfg.data_dir} to {conf_file}")
+
+
+def _gitignore_data_dir(cfg) -> None:
+    """Ensure the project-local data directory is git-ignored."""
+    gitignore = cfg.project_dir / ".gitignore"
+    entry = f"{cfg.data_dir.name}/"
+    lines = gitignore.read_text().splitlines() if gitignore.exists() else []
+    if entry in (line.strip() for line in lines):
+        return
+    lines.append(entry)
+    gitignore.write_text("\n".join(lines) + "\n")
+    success(f"Added {entry} to .gitignore")
 
 
 def _setup_docker_files(cfg, community_only: bool = False) -> None:
@@ -434,9 +553,11 @@ def _generate_docker_odoo_conf(
     if has_vendored:
         addons_paths.append("/opt/project/vendored")
 
+    admin_passwd = os.getenv("ADMIN_PASSWD", "admin")
+
     return f"""[options]
 addons_path = {",".join(addons_paths)}
-admin_passwd = admin
+admin_passwd = {admin_passwd}
 db_host = db
 db_port = 5432
 db_user = odoo

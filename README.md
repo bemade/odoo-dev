@@ -221,7 +221,19 @@ PYTHON_VERSION=3.12
 # DB_PORT=5432
 # DB_USER=odoo
 # DB_PASSWORD=odoo
+
+# Optional — Odoo master password, written into conf/odoo.conf by `setup`.
+# Defaults to "admin".
+# ADMIN_PASSWD=admin
 ```
+
+`setup` also points `data_dir` at a project-local `.odoo-data/` (git-ignored)
+rather than the shared `~/.local/share/Odoo`, so filestores, sessions and the
+addons cache stay scoped to the checkout they belong to.
+
+Python packages declared in your addons' manifests — `external_dependencies`
+*and* the OCA `test_external_dependencies` convention, across both `addons/`
+and `vendored/` — are installed into the venv by `setup`.
 
 ## Requirements
 

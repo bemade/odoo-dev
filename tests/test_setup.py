@@ -179,7 +179,14 @@ class TestLocalOdooConf:
         cfg = _make_cfg(tmp_path)
         (tmp_path / "conf").mkdir()
         _setup_odoo_config(cfg)
-        assert "vendored" not in cfg.config_file.read_text()
+        # Scoped to addons_path: data_dir also embeds project_dir, whose tmp
+        # path can itself contain "vendored".
+        addons_path = next(
+            line
+            for line in cfg.config_file.read_text().splitlines()
+            if line.startswith("addons_path")
+        )
+        assert "vendored" not in addons_path
 
     def test_local_conf_includes_vendored_when_present(self, tmp_path: Path):
         from odoo_dev.commands.setup import _setup_odoo_config
