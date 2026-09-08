@@ -1,6 +1,7 @@
 """Local Odoo runtime commands."""
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -582,6 +583,25 @@ def _drop_database(cfg, db_name: str) -> None:
         warning(f"Failed to drop test database {db_name}")
         if result.stderr:
             warning(result.stderr.strip())
+        return
+
+    # dropdb only removes the database. odoo-bin's own `db drop` deletes the
+    # filestore too, so the fallback has to, or every test run leaks a
+    # filestore directory that nothing ever cleans up.
+    _drop_filestore(cfg, db_name)
+
+
+def _drop_filestore(cfg, db_name: str) -> None:
+    """Remove the filestore directory belonging to a dropped database."""
+    from odoo_dev.config import read_data_dir
+
+    filestore = read_data_dir(cfg.config_file) / "filestore" / db_name
+    if not filestore.is_dir():
+        return
+    try:
+        shutil.rmtree(filestore)
+    except OSError as exc:
+        warning(f"Could not remove filestore {filestore}: {exc}")
 
 
 def _terminate_connections(db_name: str, db_config: dict[str, str]) -> None:
