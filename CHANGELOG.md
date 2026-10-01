@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/bemade/odoo-dev/compare/v1.4.0...v1.5.0) (2026-10-01)
+
+
+### Features
+
+* **setup:** project-local data_dir, addon manifest deps, ADMIN_PASSWD ([#23](https://github.com/bemade/odoo-dev/issues/23)) ([60c931e](https://github.com/bemade/odoo-dev/commit/60c931e3cf38c025895eb183d1a3a1ee929931e2))
+
+
+### Bug Fixes
+
+* **vendor:** ignore local python bytecode in vendor check, fail on tracked bytecode ([#25](https://github.com/bemade/odoo-dev/issues/25)) ([8d679af](https://github.com/bemade/odoo-dev/commit/8d679af962d96002a1ff978e6229ffeaf063250c))
+
 ## [1.4.0](https://github.com/bemade/odoo-dev/compare/v1.3.0...v1.4.0) (2026-09-04)
 
 
