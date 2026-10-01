@@ -9,7 +9,9 @@ latter two and follows symlinks), which is what makes ``vendor check`` trustwort
 Python bytecode (``__pycache__/``, ``*.pyc``, ``*.pyo``) is excluded from the
 comparison: running or testing a vendored addon locally compiles it in place, and
 those artifacts are gitignored build output that is neither part of the pinned
-source nor present in a fresh CI checkout.
+source nor present in a fresh CI checkout. A directory holding nothing but
+bytecode (e.g. a ``tests/`` whose sources a pin bump removed) is skipped too: git
+does not track empty directories, so CI never sees it.
 """
 
 from __future__ import annotations
@@ -69,12 +71,20 @@ _BYTECODE_DIRS = {"__pycache__"}
 _BYTECODE_SUFFIXES = (".pyc", ".pyo")
 
 
+def is_bytecode(rel: str) -> bool:
+    """True if ``rel`` is python bytecode or lies inside a ``__pycache__`` dir."""
+    parts = Path(rel).parts
+    return rel.endswith(_BYTECODE_SUFFIXES) or any(
+        p in _BYTECODE_DIRS for p in parts
+    )
+
+
 def _entries(root: Path) -> dict:
     """Map each path relative to ``root`` to a comparable fingerprint.
 
     - symlink -> ("link", target)          (never dereferenced)
     - file    -> ("file", exec_bit, sha1)
-    - dir     -> ("dir",)
+    - dir     -> ("dir",)              (only if it holds a file or link)
 
     Python bytecode is skipped entirely (see the module docstring).
     """
@@ -104,7 +114,14 @@ def _entries(root: Path) -> dict:
             else:
                 exec_bit = 1 if os.stat(p).st_mode & 0o100 else 0
                 out[rel] = ("file", exec_bit, _sha1(p))
-    return out
+    # Like git, a directory exists only through its contents.
+    occupied = {
+        str(parent)
+        for rel, v in out.items()
+        if v[0] != "dir"
+        for parent in Path(rel).parents
+    }
+    return {rel: v for rel, v in out.items() if v[0] != "dir" or rel in occupied}
 
 
 def _sha1(path: Path) -> str:
