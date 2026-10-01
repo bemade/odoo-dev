@@ -6,7 +6,8 @@ Assertions (any failure => non-empty problem list => CI red):
   3. moved-tag tripwire (when the entry carries a ``version`` tag);
   4. external python deps of vendored manifests are present in ``requirements.txt``;
   5. no addon name in both ``addons/`` and ``vendored/`` (double-load);
-  6. no file under ``vendored/`` is gitignored (it would be dropped at commit);
+  6. no file under ``vendored/`` is gitignored (it would be dropped at commit),
+     and no python bytecode under it is tracked by git (it is not in the pin);
   7. (``allow_hybrid=False`` only) no ``addons/`` symlink still points into a
      ``.repos/`` submodule — i.e. the repo is fully vendored, not a hybrid.
 The gate writes nothing.
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from odoo_dev.vendor.lock import Lockfile
-from odoo_dev.vendor.materialize import extract_subtree, tree_diff
+from odoo_dev.vendor.materialize import extract_subtree, is_bytecode, tree_diff
 from odoo_dev.vendor.sources import get_source_at, tag_resolves_to
 
 _MANIFEST_NAMES = ("__manifest__.py", "__openerp__.py")
@@ -124,6 +125,9 @@ def gitignored_under_vendored(project_dir: Path) -> list:
     ``check-ignore`` (not a tracked-vs-on-disk comparison) is the right probe: it
     reports exactly the paths git would drop, and consults the index, so neither a
     not-yet-staged ``vendor add`` nor a deliberate ``git add -f`` is a false alarm.
+
+    Python bytecode is not probed: it is never part of a pin, so ignoring it is
+    correct (and :func:`tracked_bytecode_under_vendored` catches the opposite).
     """
     project_dir = Path(project_dir)
     vendored = project_dir / "vendored"
@@ -132,7 +136,8 @@ def gitignored_under_vendored(project_dir: Path) -> list:
     rels = [
         str(p.relative_to(project_dir))
         for p in sorted(vendored.rglob("*"))
-        if p.is_symlink() or p.is_file()
+        if (p.is_symlink() or p.is_file())
+        and not is_bytecode(str(p.relative_to(vendored)))
     ]
     if not rels:
         return []
@@ -147,6 +152,39 @@ def gitignored_under_vendored(project_dir: Path) -> list:
     if res.returncode not in (0, 1):
         return []
     return [line for line in res.stdout.splitlines() if line.strip()]
+
+
+def tracked_bytecode_under_vendored(project_dir: Path) -> list:
+    """Python bytecode under ``vendored/`` that git tracks (index or HEAD).
+
+    :func:`tree_diff` skips bytecode so local test runs don't fail the gate, which
+    would also hide a ``.pyc`` that was committed by mistake. Untracked or
+    gitignored bytecode is fine; tracked bytecode ships a tree the pin does not
+    describe.
+    """
+    project_dir = Path(project_dir)
+    if not (project_dir / "vendored").is_dir() or not (project_dir / ".git").exists():
+        return []
+    res = subprocess.run(
+        ["git", "-C", str(project_dir), "ls-files", "-z", "--", "vendored"],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return []
+    return [
+        rel
+        for rel in res.stdout.split("\0")
+        if rel and is_bytecode(rel[len("vendored/"):])
+    ]
+
+
+def _has_source(addon_dir: Path) -> bool:
+    """True if ``addon_dir`` holds anything besides python bytecode."""
+    return any(
+        (p.is_file() or p.is_symlink()) and not is_bytecode(str(p.relative_to(addon_dir)))
+        for p in addon_dir.rglob("*")
+    )
 
 
 def verify(
@@ -167,7 +205,7 @@ def verify(
     problems: list = []
 
     vendored_dirs = (
-        {p.name for p in vendored.iterdir() if p.is_dir()}
+        {p.name for p in vendored.iterdir() if p.is_dir() and _has_source(p)}
         if vendored.exists()
         else set()
     )
@@ -225,6 +263,13 @@ def verify(
             f"{rel}: under vendored/ but ignored by .gitignore — git will drop it "
             f"from the commit and the pushed tree will not match addons.lock "
             f"(add a '!vendored/**' negation, keep it last)"
+        )
+
+    for rel in tracked_bytecode_under_vendored(project_dir):
+        problems.append(
+            f"{rel}: python bytecode under vendored/ is tracked by git — it is not "
+            f"part of the pin (git rm --cached it; ignore '**/__pycache__/' after "
+            f"the '!vendored/**' negation)"
         )
 
     if not allow_hybrid:

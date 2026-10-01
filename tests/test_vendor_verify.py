@@ -243,3 +243,63 @@ def test_verify_strict_ignores_non_repos_symlink(tmp_path):
     (proj / "addons").mkdir(exist_ok=True)
     (proj / "addons" / "external").symlink_to(Path("../elsewhere"))
     assert verify(proj, lock, cache_dir=tmp_path / "cache", allow_hybrid=False) == []
+
+
+# --- python bytecode left behind by running/testing vendored addons -----------
+
+
+def _compile_in_place(proj: Path) -> list:
+    """Simulate ``odoo-dev test``: drop bytecode beside the vendored sources.
+
+    Includes the two shapes that outlive a pin bump: a subdir whose sources are
+    gone but whose ``__pycache__`` remains, and a whole ex-addon left as nothing
+    but bytecode (git does not track the empty dirs, so CI never sees either).
+    """
+    pycs = [
+        "vendored/shared_addon/__pycache__/models.cpython-312.pyc",
+        "vendored/shared_addon/tests/__pycache__/test_x.cpython-312.pyc",
+        "vendored/removed_addon/__pycache__/__init__.cpython-312.pyc",
+    ]
+    for rel in pycs:
+        p = proj / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x00compiled")
+    return pycs
+
+
+def test_verify_green_with_untracked_bytecode_outside_git(tmp_path):
+    proj, lock = _sync_clean(tmp_path)
+    _compile_in_place(proj)
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
+
+
+def test_verify_green_with_gitignored_bytecode(tmp_path):
+    """Regression: ignoring ``__pycache__`` after ``!vendored/**`` is correct
+    hygiene, but the gitignore probe reported every local .pyc as a file git
+    would drop, failing the gate after any local test run.
+    """
+    repo, sha = _source_repo(tmp_path)
+    proj, lock = _git_project(
+        tmp_path,
+        LockEntry("shared_addon", str(repo), sha),
+        "!vendored/**\n**/__pycache__/\n",
+    )
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    _compile_in_place(proj)
+    assert verify(proj, lock, cache_dir=tmp_path / "cache") == []
+
+
+def test_verify_red_when_bytecode_is_tracked(tmp_path):
+    """Bytecode committed under vendored/ is not in the pin; it must fail."""
+    repo, sha = _source_repo(tmp_path)
+    proj, lock = _git_project(
+        tmp_path,
+        LockEntry("shared_addon", str(repo), sha),
+        "!vendored/**\n**/__pycache__/\n",
+    )
+    sync_addons(proj, lock, cache_dir=tmp_path / "cache")
+    pycs = _compile_in_place(proj)
+    _git(proj, "add", "-f", pycs[0])
+    problems = verify(proj, lock, cache_dir=tmp_path / "cache")
+    assert len(problems) == 1
+    assert pycs[0] in problems[0] and "tracked" in problems[0]
