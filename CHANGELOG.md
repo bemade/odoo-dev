@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/bemade/odoo-dev/compare/v1.5.0...v1.5.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **vendor:** resolve --branch to the fetched remote tip, not the clone-time local branch ([#26](https://github.com/bemade/odoo-dev/issues/26)) ([af03080](https://github.com/bemade/odoo-dev/commit/af030803ba92ba140c875d728c22994eb9271d39))
+
 ## [1.5.0](https://github.com/bemade/odoo-dev/compare/v1.4.0...v1.5.0) (2026-10-01)
 
 
