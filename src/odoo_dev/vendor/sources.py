@@ -41,11 +41,15 @@ def _has_commit(repo: Path, commit: str) -> bool:
     )
 
 
+def _is_local(source: str) -> bool:
+    local = Path(source).expanduser()
+    return local.is_dir() and (local / ".git").exists()
+
+
 def _ensure_clone(source: str, cache_dir: Path | None = None) -> Path:
     """Return a local repo path for ``source`` (clone into cache if remote), fetched."""
-    local = Path(source).expanduser()
-    if local.is_dir() and (local / ".git").exists():
-        return local
+    if _is_local(source):
+        return Path(source).expanduser()
     cache_dir = cache_dir or default_cache_dir()
     repo = cache_dir / _cache_key(source)
     if not repo.exists():
@@ -67,7 +71,14 @@ def _ensure_clone(source: str, cache_dir: Path | None = None) -> Path:
 def resolve_commit(source: str, ref: str, cache_dir: Path | None = None) -> str:
     """Resolve a ref (tag, branch, or sha) in ``source`` to a full commit sha."""
     repo = _ensure_clone(source, cache_dir)
-    for candidate in (ref, f"origin/{ref}", f"refs/tags/{ref}"):
+    # A cached clone's local branches are frozen at clone time; fetch only moves
+    # origin/*, so the remote-tracking ref must win there. A local source is the
+    # user's own repo, where the local branch is the truth.
+    if _is_local(source):
+        candidates = (ref, f"origin/{ref}", f"refs/tags/{ref}")
+    else:
+        candidates = (f"origin/{ref}", ref, f"refs/tags/{ref}")
+    for candidate in candidates:
         res = subprocess.run(
             [
                 "git",
