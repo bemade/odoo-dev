@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/bemade/odoo-dev/compare/v1.5.1...v1.6.0) (2026-10-05)
+
+
+### Features
+
+* **vendor:** pin upstream feature branches, gate production on merged pins ([#28](https://github.com/bemade/odoo-dev/issues/28)) ([e232daa](https://github.com/bemade/odoo-dev/commit/e232daa1eb0b040445f97046bdc79ef745153298))
+
 ## [1.5.1](https://github.com/bemade/odoo-dev/compare/v1.5.0...v1.5.1) (2026-10-02)
 
 
