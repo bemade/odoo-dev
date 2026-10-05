@@ -141,6 +141,8 @@ odoo-dev vendor sync                  # Materialize vendored/ from addons.lock
 odoo-dev vendor check                 # CI gate: verify vendored/ byte-matches the pins
 odoo-dev vendor add fsm --source github.com/bemade/bemade-addons --version 18.0.1.3.2
 odoo-dev vendor bump fsm --version 18.0.1.4.0   # Move a pin and re-materialize
+odoo-dev vendor bump fsm --branch 18.0-fix-x    # Track a branch, pin its head
+odoo-dev vendor check --mainline 18.0           # Production gate: pins must be merged upstream
 odoo-dev vendor update                # Pull newest upstream for all tracked addons
 odoo-dev vendor update fsm --dry-run  # Show what would update, change nothing
 odoo-dev vendor develop fsm           # Edit fsm against a live source clone
@@ -165,6 +167,14 @@ commit; a `version` tag (if set) still resolves to that commit; every manifest
 name collides between `addons/` and `vendored/`; and no file under `vendored/` is
 gitignored. Python bytecode (`__pycache__/`, `*.pyc`) is excluded from the byte
 comparison, so running the test suite doesn't turn the check red.
+
+`vendor check --mainline <branch>` (for merge requests to production) also fails
+any pin whose commit is not in the history of that branch of its source — an
+upstream change still under test on a feature branch. A client can pin a feature
+branch while the change is tested on its staging (`vendor bump <addon> --branch
+<feature>`), but production only takes it once it is merged upstream and
+re-pinned. An entry that is meant to live on a branch (a long-lived fork) opts
+out with `allow_unmerged: true` in `addons.lock`.
 
 That last assertion catches a trap specific to migration: repo-wide ignore rules
 (`node_modules`, `package.json`, …) are harmless while shared addons live in

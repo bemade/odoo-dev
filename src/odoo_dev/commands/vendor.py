@@ -70,11 +70,23 @@ def check_cmd(
             ".repos/). Use in CI for repos that declare themselves fully vendored.",
         ),
     ] = False,
+    mainline: Annotated[
+        Optional[str],
+        typer.Option(
+            "--mainline",
+            help="Also fail any pin whose commit is not on this branch of its "
+            "source (e.g. 19.0): an upstream change still on a feature branch. "
+            "Use in CI on merge requests to production. Entries marked "
+            "'allow_unmerged: true' are exempt.",
+        ),
+    ] = None,
 ) -> None:
     """Verify vendored/ matches addons.lock exactly (the CI gate). Exit 1 on any problem."""
     cfg = load_config()
     lock = Lockfile.load(cfg.lockfile_path)
-    problems = verify(cfg.project_dir, lock, allow_hybrid=not no_hybrid)
+    problems = verify(
+        cfg.project_dir, lock, allow_hybrid=not no_hybrid, mainline=mainline
+    )
     if problems:
         for p in problems:
             error(p)
@@ -124,11 +136,20 @@ def bump_cmd(
     commit: Annotated[
         Optional[str], typer.Option("--commit", help="Bump to an explicit commit/ref.")
     ] = None,
+    branch: Annotated[
+        Optional[str],
+        typer.Option(
+            "--branch",
+            help="Track this branch from now on (e.g. an upstream feature branch "
+            "under test, or the mainline once merged); without --version/--commit "
+            "the pin moves to its head.",
+        ),
+    ] = None,
 ) -> None:
     """Move an addon's pin to a new version/commit (or its tracked branch HEAD) and re-sync."""
     cfg = load_config()
     try:
-        entry = bump_addon(cfg.project_dir, name, version, commit)
+        entry = bump_addon(cfg.project_dir, name, version, commit, branch=branch)
     except EditError as exc:
         error(str(exc))
         raise typer.Exit(2)

@@ -137,6 +137,37 @@ def get_source_at(
     return repo
 
 
+def commit_on_branch(repo: Path, source: str, commit: str, branch: str) -> bool:
+    """True if ``commit`` is in the history of ``branch`` of ``source``.
+
+    A remote source's cache is fetched for ``branch`` first, so a merge made
+    upstream after the cache was filled is seen. Raises RuntimeError when the
+    branch does not exist.
+    """
+    if not _is_local(source):
+        subprocess.run(
+            ["git", "-C", str(repo), "fetch", "origin",
+             f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            capture_output=True,
+            text=True,
+        )
+    for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+        known = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "-q", ref],
+            capture_output=True,
+            text=True,
+        )
+        if known.returncode == 0:
+            return (
+                subprocess.run(
+                    ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, ref],
+                    capture_output=True,
+                ).returncode
+                == 0
+            )
+    raise RuntimeError(f"{source}: no branch {branch!r}")
+
+
 def tag_resolves_to(repo: Path, tag: str, commit: str) -> bool:
     """True if ``tag`` in ``repo`` dereferences to ``commit`` (the moved-tag tripwire)."""
     res = subprocess.run(

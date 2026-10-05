@@ -67,13 +67,21 @@ def bump_addon(
     version: Optional[str] = None,
     commit: Optional[str] = None,
     cache_dir: Optional[Path] = None,
+    branch: Optional[str] = None,
 ) -> LockEntry:
-    """Move an existing addon's pin to a new version/commit (or its branch HEAD)."""
+    """Move an existing addon's pin to a new version/commit (or its branch HEAD).
+
+    ``branch`` switches the branch the entry tracks (e.g. an upstream feature
+    branch under test, or back to the mainline once it merged); without a
+    version/commit the pin moves to that branch's head.
+    """
     project_dir = Path(project_dir)
     lock = Lockfile.load(project_dir / "addons.lock")
     if name not in lock.entries:
         raise EditError(f"{name}: not in addons.lock (use 'vendor add')")
     entry = lock.entries[name]
+    if branch:
+        entry.branch = branch
     sha = _resolve_pin(name, entry.source, version, commit, entry.branch, cache_dir)
     entry.commit = sha
     # ``version`` is the tag-intent metadata, and ``vendor check``'s moved-tag
