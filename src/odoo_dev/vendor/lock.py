@@ -31,6 +31,9 @@ class LockEntry:
     commit: str
     version: Optional[str] = None
     branch: Optional[str] = None
+    # An intentional pin outside the source's mainline (a long-lived fork or
+    # feature branch): exempt from ``vendor check --mainline``.
+    allow_unmerged: bool = False
 
     def to_dict(self) -> dict:
         d: dict = {"source": self.source}
@@ -39,6 +42,8 @@ class LockEntry:
         if self.branch is not None:
             d["branch"] = self.branch
         d["commit"] = self.commit
+        if self.allow_unmerged:
+            d["allow_unmerged"] = True
         return d
 
     @classmethod
@@ -59,6 +64,7 @@ class LockEntry:
             commit=str(commit),
             version=(str(data["version"]) if data.get("version") is not None else None),
             branch=(str(data["branch"]) if data.get("branch") is not None else None),
+            allow_unmerged=bool(data.get("allow_unmerged", False)),
         )
 
 

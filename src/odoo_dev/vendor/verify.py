@@ -25,7 +25,7 @@ from typing import Optional
 
 from odoo_dev.vendor.lock import Lockfile
 from odoo_dev.vendor.materialize import extract_subtree, is_bytecode, tree_diff
-from odoo_dev.vendor.sources import get_source_at, tag_resolves_to
+from odoo_dev.vendor.sources import commit_on_branch, get_source_at, tag_resolves_to
 
 _MANIFEST_NAMES = ("__manifest__.py", "__openerp__.py")
 
@@ -192,12 +192,18 @@ def verify(
     lock: Lockfile,
     cache_dir: Optional[Path] = None,
     allow_hybrid: bool = True,
+    mainline: Optional[str] = None,
 ) -> list:
     """Return a list of human-readable problems; empty means the gate is green.
 
     ``allow_hybrid=False`` (the CI gate for a repo that declares itself fully
     vendored) additionally fails if any ``addons/`` symlink still points into a
     ``.repos/`` submodule.
+
+    ``mainline`` (the production gate, e.g. ``"19.0"``) additionally fails any
+    pin whose commit is not in the history of that branch of its source — an
+    upstream change still under test on a feature branch. Entries marked
+    ``allow_unmerged`` are exempt.
     """
     project_dir = Path(project_dir)
     vendored = project_dir / "vendored"
@@ -235,6 +241,20 @@ def verify(
                 continue
             for d in tree_diff(ref, vendored / name):
                 problems.append(f"{name}: vendored copy differs from pin — {d}")
+
+        if mainline and not entry.allow_unmerged:
+            try:
+                merged = commit_on_branch(repo, entry.source, entry.commit, mainline)
+            except Exception as exc:
+                problems.append(f"{name}: cannot check mainline {mainline}: {exc}")
+            else:
+                if not merged:
+                    problems.append(
+                        f"{name}: pinned commit {entry.commit[:12]} is not on "
+                        f"{mainline} of its source (an unmerged upstream change: "
+                        f"merge it upstream and re-pin, or mark the entry "
+                        f"'allow_unmerged: true' if the branch pin is intended)"
+                    )
 
         if entry.version:
             tag = f"{name}/{entry.version}"
